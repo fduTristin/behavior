@@ -50,13 +50,23 @@ def _remap(path: str, root: Path) -> str:
     return path
 
 
+def _remap_tree(value, root: Path):
+    """Deep-remap every ORIGINAL_ROOT-absolute string leaf in a recipe subtree."""
+    if isinstance(value, dict):
+        return {key: _remap_tree(child, root) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_remap_tree(child, root) for child in value]
+    if isinstance(value, str):
+        return _remap(value, root)
+    return value
+
+
 def load_stage1(root: Path, branch: str, ckpt: Path | None, device: str):
     run = root / branch
     recipe = json.loads((run / "recipe.json").read_text())
     if recipe["config"]["component"] != branch:
         raise ValueError(f"recipe component mismatch: {recipe['config']['component']} != {branch}")
-    model_config = recipe["model"]
-    model_config["stats_path"] = _remap(model_config["stats_path"], root)
+    model_config = _remap_tree(recipe["model"], root)
     if Path(model_config["stats_path"]).name != "stats.json" and branch == "low":
         raise ValueError("Low stats must be the stage1-v4-action-bounds sidecar")
     if ckpt is None:

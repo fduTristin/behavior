@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -18,6 +19,7 @@ from g05.utils.memlite_skill_protocol import (
     parse_b_memory_text,
 )
 from scripts.memlite_stage1_runtime import (
+    Stage1PlannerSession,
     advance_b_memory,
     initial_b_memory,
     initial_planner_state,
@@ -109,6 +111,134 @@ class TestStage1RuntimeMemory(unittest.TestCase):
         task = load_stage1_tasks()[0]
         memory = initial_b_memory(task["task_name"])
         self.assertEqual(advance_b_memory(memory, "None", task["task_name"]), memory)
+
+
+PARENT_FIXTURE = (
+    'Parent command: description="pick up from"; targets=["radio_89"]; '
+    'sources=["coffee_table_koagbh_0"]; destinations=[]; target_parts=[]; arms=[]'
+)
+
+
+class TestStage1PlannerSession(unittest.TestCase):
+    """Contract tests for the serving-side planner episode state."""
+
+    def _event(self, bundle: str, parent: str = PARENT_FIXTURE) -> dict:
+        from g05.utils.memlite_skill_protocol import canonical_json, parse_active_skills_text
+
+        semantic = parse_active_skills_text(bundle, allow_empty=False)
+        return {
+            "decision": "EXECUTE",
+            "parent_goal": parent,
+            "active_skills_text": bundle,
+            "active_skills_semantic_json": canonical_json(semantic),
+            "memory_update": None,  # filled below before commit
+            "task_complete_claimed": False,
+        }
+
+    def test_high_projection_passes_model_safe_v6_label(self):
+        session = Stage1PlannerSession(0, "turning on radio")
+        projection = session.high_projection()
+        from g05.data_processor.processor.memlite_v6_projection import _model_safe_v6_label
+
+        label = _model_safe_v6_label(projection)
+        self.assertEqual(label["memlite_branch"], "high")
+        self.assertTrue(label["task_complete"])  # terminal placeholder shape
+
+    def test_commit_advances_causal_state(self):
+        session = Stage1PlannerSession(0, "turning on radio")
+        first = self._event(_BUNDLES[0])
+        first["memory_update"] = advance_b_memory(session.memory, session.previous_intent, session.task_name)
+        session.commit(first)  # previous_intent "None" is a no-op commit
+        self.assertEqual(session.current_bundle_text, _BUNDLES[0])
+        self.assertEqual(session.memory, initial_b_memory(session.task_name))
+
+        low = session.low_projection()
+        from g05.data_processor.processor.memlite_v6_projection import _model_safe_v6_label
+
+        label = _model_safe_v6_label(low)
+        self.assertEqual(label["memlite_branch"], "low")
+        self.assertEqual(label["next_decision"], "EXECUTE")
+        self.assertTrue(label["low_action_supervision_mask"])
+
+        second = self._event(_BUNDLES[1])
+        second["memory_update"] = advance_b_memory(session.memory, session.previous_intent, session.task_name)
+        session.commit(second)
+        parsed = parse_b_memory_text(session.memory, task_name=session.task_name)
+        self.assertEqual(parsed["issued_command_history"], [_BUNDLES[0]])
+
+    def test_commit_rejects_memory_recurrence_violation(self):
+        session = Stage1PlannerSession(0, "turning on radio")
+        event = self._event(_BUNDLES[0])
+        event["memory_update"] = initial_b_memory("picking up trash")
+        with self.assertRaises(ValueError):
+            session.commit(event)
+
+    def test_commit_rejects_terminal_claim(self):
+        session = Stage1PlannerSession(0, "turning on radio")
+        event = self._event(_BUNDLES[0])
+        event["memory_update"] = advance_b_memory(session.memory, session.previous_intent, session.task_name)
+        event["task_complete_claimed"] = True
+        with self.assertRaises(ValueError):
+            session.commit(event)
+
+    def test_raw_observation_matches_dataset_layout(self):
+        import numpy as np
+        import torch
+
+        shape_meta = {
+            "images": [
+                {"key": "head_rgb", "raw_shape": (4, 4, 3)},
+                {"key": "left_wrist_rgb", "raw_shape": (4, 4, 3)},
+            ],
+            "state": [{"key": "left_arm", "start_index": 3, "raw_shape": (7,)}],
+            "action": [{"key": "lower_body", "start_index": 0, "raw_shape": (7,)}],
+        }
+        g05_obs = {
+            "images": {
+                "head_rgb": np.full((3, 4, 4), 255, dtype=np.uint8),
+                "left_wrist_rgb": np.zeros((3, 4, 4), dtype=np.uint8),
+            },
+            "state": {"left_arm": np.arange(7, dtype=np.float32)},
+        }
+        session = Stage1PlannerSession(0, "turning on radio")
+        raw = session.raw_observation(g05_obs, shape_meta, session.high_projection())
+        self.assertEqual(raw["images"]["head_rgb"].shape, (1, 4, 4, 3))
+        self.assertEqual(raw["images"]["head_rgb"].dtype, torch.uint8)
+        self.assertTrue((raw["images"]["head_rgb"] == 255).all())
+        self.assertEqual(raw["state"]["left_arm"].shape, (1, 7))
+        self.assertEqual(raw["action"]["lower_body"].shape, (32, 7))
+        self.assertTrue(raw["action_is_pad"].all())
+        self.assertEqual(raw["task"], "turning on radio")
+        self.assertEqual(raw["embodiment"], "galaxea_r1pro")
+
+
+PARENT_FIXTURE = (
+    'Parent command: description="pick up from"; targets=["radio_89"]; '
+    'sources=["coffee_table_koagbh_0"]; destinations=[]; target_parts=[]; arms=[]'
+)
+
+
+class TestOfficialTaskTableAlignment(unittest.TestCase):
+    """The vendored official instruction table must agree with the runtime asset."""
+
+    def test_vendored_tasks_jsonl_matches_stage1_asset(self):
+        table_path = (
+            Path(__file__).resolve().parent.parent
+            / "scripts/behavior_bridge/tasks.jsonl"
+        )
+        rows = [json.loads(line) for line in table_path.open() if line.strip()]
+        tasks = load_stage1_tasks()
+        self.assertEqual(len(rows), 100)
+        self.assertEqual([r["task_index"] for r in rows], list(range(100)))
+        for row, entry in zip(rows, tasks):
+            self.assertEqual(row["task_index"], entry["task_index"])
+            self.assertEqual(row["task_name"].replace("_", " "), entry["task_name"])
+            self.assertTrue(row["task"])
+
+    def test_official_84_is_tidying_bathroom(self):
+        """Pinned probe for the id-to-name mapping the team once suspected."""
+        tasks = load_stage1_tasks()
+        self.assertEqual(tasks[84]["task_name"], "tidying bathroom")
 
 
 if __name__ == "__main__":

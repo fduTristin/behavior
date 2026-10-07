@@ -135,42 +135,49 @@ asyncio.run(t())
 
 - **缺 `stats.json` / `B-dataset-stats.json` / `action_tokenizer.pt`**：第 3 步
   下载不完整，四个运行时资产缺一不可（high/low 的归一化统计文件不同，不能混用）。
-- **正式 BEHAVIOR 评测桥接**（robodojo bridge、官方任务指令列表）不在本仓库内；
-  本 server 是裸 policy server，官方评测需另接团队的 bridge 服务（见下节"bridge 说明"）。
+- **要跑官方 BEHAVIOR 评测**：不要用本节的裸 server，直接用
+  `serve_memlite_stage1_behavior.py`（见下节"官方评测服务"）。
 
-## bridge 说明（官方评测才需要）
+## 官方评测服务（完整闭环，单卡约 25GB）
 
-- bridge 已随本分支 vendor 在 `scripts/behavior_bridge/serve_behavior_policy_mem.py`
-  （来源：robodojo `/mnt/sdc1/robodojo/behavior_bridge_staging/`，2026-09-03 验证快照）。
-  提供官方 BEHAVIOR v3.9.x 协议：61 维 proprio 切片、三相机 CHW uint8、23 维动作、
-  fire-and-forget reset、`/healthz`、官方 bytes-key msgpack 编码。
-- 兼容性已验证：配套 CPU 测试（修补过时的测试桩后）在本分支全部通过——
-  ```
-  cd scripts/behavior_bridge && PYTHONPATH=../..:../../src \
-      python test_adapter_mem_cpu.py     # 期望结尾 MEMLITE_BEHAVIOR_ADAPTER_CPU_TESTS=PASS
-  ```
-- **但 bridge 只解决"wire 协议"层。** 完整官方闭环还需要：
-  1. **stage1 planner 运行时**（B-memory K=3 状态机、planner 事件准入、任务切换隔离）：
-     团队仓库至今没有发布过 stage1 的官方编排运行时（旧 `serve_policy_memlite_fm.py`
-     的六帧/契约断言与 stage1 的 `obs_size=1`、planner-outcome 六字段协议不兼容），
-     这部分需要按 `g05.utils.memlite_skill_protocol` 的协议规范新写适配；
-  2. **官方 100 任务指令表**：本机已有
-     `datasets/2026-challenge-demos/datasets/fduTristin--2026-challenge-demos/snapshots/master/meta/tasks.jsonl`
-     （100 行，`task_index`/`task` 字段与 bridge 读取器匹配；任务名与 stage1 发布
-     manifest 的 task_names 逐一对应）。部署时把这个文件拷到新机器，
-     用 `--tasks_path` 指向即可，无需再向队友索取；
-  3. **初始 memory（已解决）**：stage1 的 planner 记忆不是 bridge 快照里那张
-     5 任务 `Task=<id>; Completed=none.` 表（那是旧 v9 协议，不要用于 stage1），
-     而是 B-memory 规范 JSON。`scripts/memlite_stage1_runtime.py` 按训练侧
-     `memlite_stage1_labels.projection` 的公式对全部 100 个任务生成初始记忆，
-     `scripts/memlite_stage1_tasks.json` 钉住 100 个 canonical 任务名；
-     CPU 契约测试在 `tests/test_stage1_runtime_memory.py`。
+入口 `scripts/serve_memlite_stage1_behavior.py`，组合三层：
+
+1. **wire 协议**：`scripts/behavior_bridge/serve_behavior_policy_mem.py`
+   （vendor 自 robodojo `/mnt/sdc1/robodojo/behavior_bridge_staging/`
+   2026-09-03 验证快照）：61 维 proprio 切片、三相机 CHW uint8、23 维动作、
+   fire-and-forget reset、`/healthz`、官方 bytes-key msgpack 编码。
+   配套官方 100 任务表 vendor 在 `scripts/behavior_bridge/tasks.jsonl`
+   （sha256 `8d822231…b8427c`，与 2026-challenge-demos meta 同源，
+   部署时无需再向队友拷贝）。
+2. **stage1 planner runtime**：`scripts/memlite_stage1_runtime.py` ——
+   B-memory K=3 状态机、100 任务初始 memory（B-memory 规范 JSON，与训练侧
+   `memlite_stage1_labels.projection` 逐字节一致，经协议校验器全量验证）、
+   model projection 构造、事件准入双重复核；任务名资产
+   `scripts/memlite_stage1_tasks.json`。
+   ⚠️ bridge 快照里那张 5 任务 `Task=<id>; Completed=none.` 表是旧 v9 协议，
+   **不要用于 stage1**。
+3. **模型加载**：复用 `serve_memlite_stage1.py` 的 recipe 重建（已对全部
+   绝对路径做深度重映射，ModelScope 下载后的目录可直接作 `--root`）。
+
+```bash
+# 官方 evaluator 直连此端口（默认 10100；不要再用高低分口 10050/10051）
+python scripts/serve_memlite_stage1_behavior.py \
+    --root /path/to/memlite-stage1 --port 10100 --device cuda:0
+# 健康检查：curl http://<开发机>:10100/healthz   → OK
 ```
 
-**planner runtime（进行中）**：以 `scripts/memlite_stage1_runtime.py` 的
-memory 原语为状态机核心，按 `g05.utils.memlite_skill_protocol` 与
-`g05_policy_memlite_planner_outcome.generate_high_level` 的公开契约拼装
-serving 版 planner 运行时；完成后作为完整官方评测闭环的入口。
-- 只做策略推理/对接自有客户端 → 用 `serve_memlite_stage1.py`，不需要 bridge。
-- 端口习惯沿用：高层 10050，低层 10051。
-- 不需要把训练数据集拷到新机器：100 个任务的 prompt 模板已固化在 `recipe.json`。
+**已验证（2026-10-07，a800-2，GPU0 18.7GB）**：模拟官方客户端 18 步在线 +
+reset 重启全过；planner 连续 3 个事件全部 `<HL_END>` 闭合、`memory_update`
+逐字节满足 K=3 递推；首个 bundle `NAVIGATE→radio_89` 与数据集首个 segment
+一致；低层 FM 每 chunk 32 步取前 16。CPU 侧契约测试
+`tests/test_stage1_runtime_memory.py` 11/11、bridge adapter 测试全过
+（`MEMLITE_BEHAVIOR_ADAPTER_CPU_TESTS=PASS`）。
+
+**遗留提醒**：官方 reset 是 fire-and-forget；评测器若在同一连接内于 reset
+后立即发首帧 obs，可能撞上断连（模拟脚本实测如此）——正式评测前请用官方
+evaluator 再复核此边界；如需支持再接入容忍。正式评测数值只有在真仿真器里
+跑过才可下结论，本仓库内证据不构成成功率结论。
+
+只做策略推理 / 对接自有客户端仍可用裸 server（`serve_memlite_stage1.py`，
+原高低分口 10050/10051 的习惯仅适用于它）；100 个任务的 prompt 模板已
+固化在 `recipe.json`，部署无需拷贝训练数据集。

@@ -10,6 +10,18 @@
 
 ## 实时进度（最新记录在前）
 
+### 2026-10-07 16:40（北京时间）：stage1 官方评测闭环补齐并本机验证；映射怀疑证伪（部署线程 / fduTristin fork）
+
+- 背景：官方评测闭环需要 bridge（wire 协议）+ stage1 planner runtime（从未在任何分支发布）。本线程按用户指示排查上游 44 条远程分支，确认**无现成 runtime 可同步**（仅有 plan.md 提到的 b 候选 runtime glue，未入库）。
+- 交付（fork `deploy/memlite-stage1` 分支）：
+  - vendor 官方 bridge `scripts/behavior_bridge/`（serve_behavior_policy_mem.py + CPU 测试 + tasks.jsonl，sha256 8d822231…b8427c）；修过时测试桩后 adapter 测试全过。
+  - 新写官方协议服务 `scripts/serve_memlite_stage1_behavior.py`（单进程 high+low，端口 10100，/healthz，fire-and-forget reset，严格失败模式）。
+  - 新写 runtime `scripts/memlite_stage1_runtime.py`（B-memory K=3 状态机/初始记忆/投影构造/事件准入）+ 任务资产 `scripts/memlite_stage1_tasks.json`（100任务 canonical 名称）。
+  - `serve_memlite_stage1.py` 的 recipe 加载改为深度路径重映射（ModelScope 下载根可直接当 --root）。
+- 验证：CPU 契约测试 13/13（含与训练侧 memlite_stage1_labels.projection 逐字节一致）；GPU 端到端冒烟（a800-2 GPU0 18.7GB）：planner 3 事件全部 `<HL_END>` 闭合、memory_update 满足 K=3 递推、首 bundle=数据集首 segment（NAVIGATE→radio_89）、低层 chunk/reset 正常。测试后 GPU 已释放。证据日志 /tmp/opencode/stage1_behavior_server.log（本机临时）。
+- 映射核实（响应用户对训练元数据的怀疑）：官方 meta/tasks.jsonl ↔ v4 manifest task_names ↔ git 资产逐 id 比对 **0 冲突**；此前"33 个 IRRELEVANT"列表与官方 id 无矛盾，未发现训练元数据错配。open-loop 最大离群为 task 84（tidying bathroom，loss 2.63 vs 均值 0.36），属 loss 分布现象；如需深挖只能从该任务数据侧（标注质量）入手。测试已钉住 id84=tidying bathroom 防回归。
+- 遗留：官方 reset 后同连接首帧 obs 在模拟客户端实测断连（fire-and-forget 语义），正式评测需用官方 evaluator 复核该边界；本仓库内所有证据不构成成功率结论。
+
 ### 2026-09-30 20:30（北京时间）：高层保存恢复工程门完成，v4最终CPU QA完成（Codex / IMPL-MEM100-STAGE1）
 
 - lc1 `high-v1`两attempt均exit0，累计788.00s/4更新；950权重严格恢复两次、各首步326梯度，游标/LR/W&B同run连续，step0/2/4权重和SHA保留；08GPU全释放。不是一遍正式训练/新效果结论。
