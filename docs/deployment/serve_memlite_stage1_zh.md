@@ -159,8 +159,18 @@ asyncio.run(t())
      （100 行，`task_index`/`task` 字段与 bridge 读取器匹配；任务名与 stage1 发布
      manifest 的 task_names 逐一对应）。部署时把这个文件拷到新机器，
      用 `--tasks_path` 指向即可，无需再向队友索取；
-  3. **初始 memory 覆盖范围**：bridge 快照只覆盖 task_id 0–4，100 任务需按
-     训练数据使用的 canonical 格式扩展（`Task=<id>; Completed=none.`）。
+  3. **初始 memory（已解决）**：stage1 的 planner 记忆不是 bridge 快照里那张
+     5 任务 `Task=<id>; Completed=none.` 表（那是旧 v9 协议，不要用于 stage1），
+     而是 B-memory 规范 JSON。`scripts/memlite_stage1_runtime.py` 按训练侧
+     `memlite_stage1_labels.projection` 的公式对全部 100 个任务生成初始记忆，
+     `scripts/memlite_stage1_tasks.json` 钉住 100 个 canonical 任务名；
+     CPU 契约测试在 `tests/test_stage1_runtime_memory.py`。
+```
+
+**planner runtime（进行中）**：以 `scripts/memlite_stage1_runtime.py` 的
+memory 原语为状态机核心，按 `g05.utils.memlite_skill_protocol` 与
+`g05_policy_memlite_planner_outcome.generate_high_level` 的公开契约拼装
+serving 版 planner 运行时；完成后作为完整官方评测闭环的入口。
 - 只做策略推理/对接自有客户端 → 用 `serve_memlite_stage1.py`，不需要 bridge。
 - 端口习惯沿用：高层 10050，低层 10051。
 - 不需要把训练数据集拷到新机器：100 个任务的 prompt 模板已固化在 `recipe.json`。
