@@ -140,15 +140,24 @@ asyncio.run(t())
 
 ## bridge 说明（官方评测才需要）
 
-- bridge = `/mnt/sdc1/robodojo/behavior_bridge_staging/serve_behavior_policy_mem.py`，
-  官方 BEHAVIOR 评测桥接：23 维 wire 协议、episode reset、初始 memory 注入、
-  官方任务指令（`/mnt/sdc1/xhz/BEHAVIOR2026/2026-challenge-demos/meta/tasks.jsonl`）、
-  `/healthz` 检查。`scripts/serve_policy_memlite_fm.py` 通过 `load_bridge()` 动态加载它。
-- **该文件从未进入任何 git 分支**，只在 robodojo 集群（队友侧存储）上存在；
-  本部署分支的 `serve_memlite_stage1.py` 不依赖 bridge。
-- 只做策略推理/对接自有客户端 → 不需要 bridge。
-- 要跑官方评测 → 需从队友处拷贝 bridge 目录和 `tasks.jsonl` 到新机器，
-  用 `--bridge-dir` / `--tasks_path` 指定路径后使用 `serve_policy_memlite_fm.py` 路线；
-  注意该路线还要求 checkpoint 附带六帧 planner 契约，stage1 checkpoint 需先改造适配。
+- bridge 已随本分支 vendor 在 `scripts/behavior_bridge/serve_behavior_policy_mem.py`
+  （来源：robodojo `/mnt/sdc1/robodojo/behavior_bridge_staging/`，2026-09-03 验证快照）。
+  提供官方 BEHAVIOR v3.9.x 协议：61 维 proprio 切片、三相机 CHW uint8、23 维动作、
+  fire-and-forget reset、`/healthz`、官方 bytes-key msgpack 编码。
+- 兼容性已验证：配套 CPU 测试（修补过时的测试桩后）在本分支全部通过——
+  ```
+  cd scripts/behavior_bridge && PYTHONPATH=../..:../../src \
+      python test_adapter_mem_cpu.py     # 期望结尾 MEMLITE_BEHAVIOR_ADAPTER_CPU_TESTS=PASS
+  ```
+- **但 bridge 只解决"wire 协议"层。** 完整官方闭环还需要：
+  1. **stage1 planner 运行时**（B-memory K=3 状态机、planner 事件准入、任务切换隔离）：
+     团队仓库至今没有发布过 stage1 的官方编排运行时（旧 `serve_policy_memlite_fm.py`
+     的六帧/契约断言与 stage1 的 `obs_size=1`、planner-outcome 六字段协议不兼容），
+     这部分需要按 `g05.utils.memlite_skill_protocol` 的协议规范新写适配；
+  2. **官方 100 任务指令表**：原路径 `/mnt/sdc1/xhz/BEHAVIOR2026/2026-challenge-demos/meta/tasks.jsonl`
+     未随 bridge 拷来，需队友另行提供；
+  3. **初始 memory 覆盖范围**：bridge 快照只覆盖 task_id 0–4，100 任务需按
+     训练数据使用的 canonical 格式扩展（`Task=<id>; Completed=none.`）。
+- 只做策略推理/对接自有客户端 → 用 `serve_memlite_stage1.py`，不需要 bridge。
 - 端口习惯沿用：高层 10050，低层 10051。
 - 不需要把训练数据集拷到新机器：100 个任务的 prompt 模板已固化在 `recipe.json`。
