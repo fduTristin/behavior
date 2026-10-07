@@ -40,6 +40,26 @@ DEFAULT_TASKS_PATH = Path(__file__).resolve().parent / "memlite_stage1_tasks.jso
 HIGH_ACTION_HORIZON = 32
 
 
+def _raw_width(meta: dict[str, Any]) -> int:
+    """Return one state/action group's width from serialized recipe metadata."""
+    raw_shape = meta.get("raw_shape")
+    if isinstance(raw_shape, bool):
+        raise ValueError(f"{meta.get('key', '<unknown>')} raw_shape may not be boolean")
+    if isinstance(raw_shape, int):
+        width = raw_shape
+    elif isinstance(raw_shape, (list, tuple)) and raw_shape:
+        width = raw_shape[-1]
+    else:
+        raise ValueError(
+            f"{meta.get('key', '<unknown>')} raw_shape must be a positive int or sequence"
+        )
+    if isinstance(width, bool) or not isinstance(width, int) or width < 1:
+        raise ValueError(
+            f"{meta.get('key', '<unknown>')} raw_shape width must be a positive integer"
+        )
+    return width
+
+
 def stop_high_placeholders(task_name: str) -> dict[str, Any]:
     """Validation-only target-region values for a target-free high prefix.
 
@@ -210,7 +230,7 @@ class Stage1PlannerSession:
         """Bridge-converted obs -> the dataset-style raw record.
 
         Byte-layout mirrors ``memlite_stage1_dataset.Stage1Dataset.raw``:
-        uint8 images [1,H,W,3], float32 state [|obs|,dim], a zero action with a
+        uint8 images [1,C,H,W], float32 state [|obs|,dim], a zero action with a
         fully padded horizon, plus the serving-side model projection.
         """
         import numpy as np
@@ -222,17 +242,28 @@ class Stage1PlannerSession:
             chw = np.asarray(g05_obs["images"][key])
             if chw.ndim != 3 or chw.shape[0] != 3:
                 raise ValueError(f"{key} must be CHW uint8, got {chw.shape}")
-            hwc = np.ascontiguousarray(chw.transpose(1, 2, 0))
-            images[key] = torch.from_numpy(hwc).unsqueeze(0)
+            if chw.dtype != np.uint8:
+                raise ValueError(f"{key} must be CHW uint8, got dtype {chw.dtype}")
+            # Torchcodec training samples and g05's ToTensor both keep channel
+            # first.  Make a writable copy because msgpack may expose a
+            # read-only NumPy view that torch.from_numpy cannot safely wrap.
+            images[key] = torch.from_numpy(
+                np.array(chw, dtype=np.uint8, copy=True, order="C")
+            ).unsqueeze(0)
         state = {
             meta["key"]: torch.from_numpy(
-                np.asarray(g05_obs["state"][meta["key"]], dtype=np.float32)
+                np.array(
+                    g05_obs["state"][meta["key"]],
+                    dtype=np.float32,
+                    copy=True,
+                    order="C",
+                )
             ).unsqueeze(0)
             for meta in shape_meta["state"]
         }
         action = {
             meta["key"]: torch.zeros(
-                HIGH_ACTION_HORIZON, int(meta["raw_shape"][-1]),
+                HIGH_ACTION_HORIZON, _raw_width(meta),
             )
             for meta in shape_meta["action"]
         }

@@ -164,7 +164,14 @@ asyncio.run(t())
 python scripts/serve_memlite_stage1_behavior.py \
     --root /path/to/memlite-stage1 --port 10100 --device cuda:0
 # 健康检查：curl http://<开发机>:10100/healthz   → OK
+
+# 不启动 OmniGibson 的最小真推理检查：握手 → reset → planner AR → low FM → 23D action
+python scripts/smoke_official_client.py --host 127.0.0.1 --port 10100 \
+    --task-id 0 --requests 1 --timeout 300
 ```
+
+`--max_new_tokens` 默认继承 checkpoint recipe 中已经审核的 planner 预算；若显式传入，
+必须与该预算完全一致。synthetic smoke 只验证服务链路和有限动作，不代表仿真任务成功。
 
 **已验证（2026-10-07，a800-2，GPU0 18.7GB）**：模拟官方客户端 18 步在线 +
 reset 重启全过；planner 连续 3 个事件全部 `<HL_END>` 闭合、`memory_update`

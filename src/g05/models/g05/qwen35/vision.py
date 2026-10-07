@@ -24,12 +24,17 @@ _flash_attn_backend = None
 
 # FA4 CuTe currently has no Ampere backward kernel. It can import and run the
 # forward pass on an A100, but training then fails during backward. Gate FA4
-# on the actual device capability instead of treating a successful import as
-# proof that the backend is trainable.
+# on exact supported architecture families instead of treating a successful
+# import as proof that the backend is usable.  In particular, the installed
+# CuTe wheel imports on sm_120 consumer Blackwell but fails during operation
+# creation; that device must fall back to SDPA.
 _fa4_training_supported = False
+_fa2_runtime_supported = False
 if torch.cuda.is_available():
     try:
-        _fa4_training_supported = torch.cuda.get_device_capability()[0] >= 9
+        _cuda_capability = torch.cuda.get_device_capability()
+        _fa4_training_supported = _cuda_capability[0] in {9, 10}
+        _fa2_runtime_supported = _cuda_capability[0] in {8, 9}
     except (AssertionError, RuntimeError):
         pass
 
@@ -42,7 +47,7 @@ if _fa4_training_supported:
     except ImportError:
         pass
 
-if _flash_attn_varlen is None:
+if _flash_attn_varlen is None and _fa2_runtime_supported:
     try:
         from flash_attn import flash_attn_varlen_func as _fa2_varlen
 
@@ -256,8 +261,9 @@ class Qwen3_5VisionAttention(nn.Module):
             if not _VISION_FLASH_ATTN_WARNED:
                 logger.warning(
                     "No compatible flash_attn backend — vision attention uses SDPA fallback. "
-                    "For Hopper/Blackwell GPUs (H100/B200), install FA4: "
-                    "pip install flash-attn-4. For Ampere/Ada (A100/RTX4090), "
+                    "Supported Hopper/data-center Blackwell GPUs may use FA4: "
+                    "pip install flash-attn-4; sm_120 uses SDPA with current wheels. "
+                    "For Ampere/Ada (A100/RTX4090), "
                     "install FA2: pip install flash-attn --no-build-isolation"
                 )
                 _VISION_FLASH_ATTN_WARNED = True

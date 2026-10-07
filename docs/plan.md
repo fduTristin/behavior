@@ -10,6 +10,14 @@
 
 ## 实时进度（最新记录在前）
 
+### 2026-10-08 02:17（北京时间）：本节点 stage1 闭环适配开始（Codex / NODE-STAGE1-E2E）
+
+- 用户要求以当前 `deploy/memlite-stage1` 新建分支做本节点适配并复验闭环 server。原 checkout 仍被 10050/10051/10100 服务引用，不热改；已从本地最新可用基线 `018cce308b272f86d9a39db1a38f704a86ab6b4b` 建独立分支 `fix/node-stage1-e2e-20261008` 和 worktree `/run/ti/BEHAVIOR2026/behavior-node-stage1`。
+- `git fetch origin --prune` 因当前容器无法解析 `github.com` 失败，故尚未证明远端没有更新；本地 `deploy/memlite-stage1` 与 `origin/deploy/memlite-stage1` 均为 `018cce3`。本轮先恢复本地可证明的缺失 planner format 模块并迁入 2026-10-07 本节点实测暴露的 shape/layout/target-free/Blackwell 后端修复，再执行 CPU 合同、导入和有界单请求 GPU 冒烟；不启动训练或 OmniGibson。
+- 当前状态为进行中：旧服务和权重不动，新服务将使用新端口和独立日志；是否能完成 GPU 冒烟仍取决于本执行会话可见的 CUDA 设备。
+- 02:22–02:29 适配已实现：从本地 dangling commit/blob 精确恢复 `memlite_planner_format.py`（恢复后 blob 仍为 `9836921…7a62`），修复 recipe 标量 `raw_shape`、CHW 图像及只读数组、processor rendered-alias→target-free `<EOC>` prefix 转换、sm_120 跳过不兼容 FA4/FA2，并令 planner token budget 默认继承已审核模型配置而非旧 160。52 项 stage1/MEM-Lite 相关 CPU 回归全过，bridge 非 socket 回归 7 项全过（socket 项因沙箱不可监听而明确跳过）；真实 high recipe/processor 三相机输出均为 `[1,3,256,256]`，转换结果通过模型自身 `_validate_target_free_high_prefix`。新增 `scripts/smoke_official_client.py`，供正常 pod shell 以单帧验证握手→reset→planner AR→low FM→23D action，不把 synthetic smoke 当任务成功。
+- GPU/进程验收阻塞边界：本 Codex 执行沙箱当前没有 `/dev/nvidia*`，`torch.cuda.is_available()==False`、`cudaGetDeviceCount` error 304，且不能创建 bridge 监听 socket；CPU 强行构造模型也在 Triton/FLA 初始化处因 0 active CUDA driver 失败，尚未进行新分支双模型 GPU restore、AR 解码或 23 维动作闭环。该失败不是 checkpoint/适配断言失败；需在可见 CUDA 设备与 localhost socket 的正常 pod shell 中执行新分支冒烟后才能宣称 server 跑通。
+
 ### 2026-10-07 16:40（北京时间）：stage1 官方评测闭环补齐并本机验证；映射怀疑证伪（部署线程 / fduTristin fork）
 
 - 背景：官方评测闭环需要 bridge（wire 协议）+ stage1 planner runtime（从未在任何分支发布）。本线程按用户指示排查上游 44 条远程分支，确认**无现成 runtime 可同步**（仅有 plan.md 提到的 b 候选 runtime glue，未入库）。

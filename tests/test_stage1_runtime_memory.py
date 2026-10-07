@@ -187,11 +187,12 @@ class TestStage1PlannerSession(unittest.TestCase):
 
         shape_meta = {
             "images": [
-                {"key": "head_rgb", "raw_shape": (4, 4, 3)},
-                {"key": "left_wrist_rgb", "raw_shape": (4, 4, 3)},
+                {"key": "head_rgb", "raw_shape": (3, 4, 4)},
+                {"key": "left_wrist_rgb", "raw_shape": (3, 4, 4)},
             ],
             "state": [{"key": "left_arm", "start_index": 3, "raw_shape": (7,)}],
-            "action": [{"key": "lower_body", "start_index": 0, "raw_shape": (7,)}],
+            # recipe.json serializes state/action raw_shape as a scalar.
+            "action": [{"key": "lower_body", "start_index": 0, "raw_shape": 7}],
         }
         g05_obs = {
             "images": {
@@ -202,7 +203,7 @@ class TestStage1PlannerSession(unittest.TestCase):
         }
         session = Stage1PlannerSession(0, "turning on radio")
         raw = session.raw_observation(g05_obs, shape_meta, session.high_projection())
-        self.assertEqual(raw["images"]["head_rgb"].shape, (1, 4, 4, 3))
+        self.assertEqual(raw["images"]["head_rgb"].shape, (1, 3, 4, 4))
         self.assertEqual(raw["images"]["head_rgb"].dtype, torch.uint8)
         self.assertTrue((raw["images"]["head_rgb"] == 255).all())
         self.assertEqual(raw["state"]["left_arm"].shape, (1, 7))

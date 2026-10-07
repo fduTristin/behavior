@@ -1,5 +1,9 @@
 # 三人协作计划：MEM-Lite + FM 方法验证
 
+2026-10-08 02:17（北京时间）Codex / NODE-STAGE1-E2E：按用户要求从本地 `deploy/memlite-stage1@018cce3` 建独立 `fix/node-stage1-e2e-20261008` worktree，负责本节点 planner 缺失模块与 shape/layout/target-free/Blackwell 适配、CPU 合同及有界 server 冒烟；旧 10050/10051/10100 服务不热改，不启动训练/正式仿真。远端 fetch 因容器 DNS 失败，当前“最新”仅指本地可用 remote-tracking ref。
+
+2026-10-08 02:29（北京时间）NODE-STAGE1-E2E 更新：缺失源码已按 Git blob `9836921…7a62` 精确恢复，四项本节点适配与配置预算默认值修正完成，52 项 stage1/MEM-Lite CPU＋7 项 bridge 非 socket 回归及真实 processor target-free 严格校验通过；新增 synthetic official client。Codex 沙箱无 `/dev/nvidia*`/CUDA driver 且 socket 监听受限，故新分支 GPU restore/AR/low chunk 尚未验收；需转正常 pod shell 做新端口单请求冒烟，不能把 CPU 通过记为闭环成功。
+
 2026-09-30 20:14（北京时间）Codex / IMPL-MEM100-STAGE1开始lc1高层真实8卡短验（4f73bda/high-v1，仅2→4更新/累计≤60min）；lc2正CPU构造仅TRAIN动作安全边界。v4隔离111条异常来源，35技能/100task标签CPU已查并经分层本人图审修正，最终数据准入待数值及v4回执；另一成员独审/正式合main仍待，不自动启动一遍/120h。
 
 2026-09-30 18:32（北京时间）Codex / IMPL-MEM100-STAGE1获用户授权补齐正式阶段1/W&B准备，拟用节点改为**lc1高层、lc2低层**。Codex负责S1–S9整合及既有官方数据的必要标签/索引准入、人审与有界验收；不另扩恢复采集或接管队友RL。每节点GPU≤64临时更新/60分钟，CPU全量作业≤60分钟/32worker/20GiB，尚未启动任何训练；一遍/120h正式长训留待准备验收完成后明确启动。保留另一成员独审作为正式合main依赖。

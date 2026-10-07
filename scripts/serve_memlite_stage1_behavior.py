@@ -54,6 +54,7 @@ for _extra in (str(REPO), str(REPO / "src"), str(SCRIPTS_DIR)):
 import websockets  # noqa: E402
 
 from g05.models.g05.inferencer import PolicyInferencer  # noqa: E402
+from g05.utils.memlite_planner_fields import PLANNER_RENDERED_FIELDS  # noqa: E402
 from memlite_stage1_runtime import (  # noqa: E402
     Stage1PlannerSession,
     load_stage1_tasks,
@@ -75,21 +76,61 @@ def load_bridge(directory: Path):
     return module
 
 
-def _strip_target_free_forbidden(samples: list[dict], forbidden: frozenset) -> list[dict]:
-    """Drop unaliased raw target names before the target-free planner prefix.
+_POST_EOC_HELPER_FIELDS = frozenset({
+    "active_skills_semantic_json_value",
+    "current_parent_goal_supervision_mask",
+    "current_parent_goal_value",
+    "outcome_target_value",
+})
 
-    Training-placeholders after ``<EOC>`` are kept under ``planner_*`` aliases
-    by ``bind_planner_rendered_fields``; the raw names exist only to satisfy
-    the schema validator and must never reach ``generate_high_level`` (its own
-    ``_validate_target_free_high_prefix`` rejects them).
+
+def _target_free_planner_sample(sample: dict, forbidden: frozenset) -> dict:
+    """Convert a validated training-shaped sample into the exact AR prefix.
+
+    ``Stage1Processor`` deliberately preserves canonical schema values while
+    moving rendered template strings to ``planner_*`` aliases.  Planner AR
+    validation consumes the opposite representation: rendered prefix values
+    under their canonical names, original template markers, and no fields
+    after ``<EOC>``.  Keep that boundary explicit here instead of weakening
+    either training validation or the generation guard.
     """
-    clean = []
-    for sample in samples:
-        item = dict(sample)
-        for key in forbidden:
-            item.pop(key, None)
-        clean.append(item)
-    return clean
+    item = dict(sample)
+    template = str(item.get("template", ""))
+    eoc = template.find("<EOC>")
+    if eoc < 0:
+        raise ValueError("planner sample template has no <EOC> boundary")
+    template = template[: eoc + len("<EOC>")]
+
+    known_alias = "planner_known_previous_outcome"
+    if known_alias not in item:
+        raise ValueError("planner sample lacks rendered known_previous_outcome alias")
+    item["known_previous_outcome"] = item[known_alias]
+    alias_marker = "<planner_known_previous_outcome_text_!>"
+    canonical_marker = "<known_previous_outcome_text_!>"
+    if alias_marker not in template:
+        raise ValueError("planner prefix lacks rendered known_previous_outcome marker")
+    item["template"] = template.replace(alias_marker, canonical_marker)
+
+    for field in PLANNER_RENDERED_FIELDS:
+        item.pop(f"planner_{field}", None)
+    for key in forbidden | _POST_EOC_HELPER_FIELDS:
+        item.pop(key, None)
+    return item
+
+
+def _planner_token_budget(configured: int, requested: int | None) -> int:
+    """Resolve CLI budget without inheriting the legacy 160-token default."""
+    if isinstance(configured, bool) or not isinstance(configured, int) or configured < 1:
+        raise ValueError("configured planner token budget must be a positive integer")
+    if requested is None:
+        return configured
+    if isinstance(requested, bool) or not isinstance(requested, int) or requested < 1:
+        raise ValueError("requested planner token budget must be a positive integer")
+    if requested != configured:
+        raise ValueError(
+            f"planner max_new_tokens must equal configured budget {configured}, got {requested}"
+        )
+    return requested
 
 
 class Stage1BehaviorPolicy:
@@ -105,7 +146,7 @@ class Stage1BehaviorPolicy:
         shape_meta: dict,
         device: str,
         action_steps: int = 16,
-        max_new_tokens: int = 160,
+        max_new_tokens: int | None = None,
         tasks=None,
     ):
         from g05.models.g05.g05_policy_memlite_planner_outcome import (
@@ -124,7 +165,10 @@ class Stage1BehaviorPolicy:
         if int(action_steps) < 1:
             raise ValueError("action_steps must be >= 1")
         self.action_steps = int(action_steps)
-        self.max_new_tokens = int(max_new_tokens)
+        self.max_new_tokens = _planner_token_budget(
+            int(getattr(high_policy, "planner_default_max_new_tokens", 1024)),
+            max_new_tokens,
+        )
         self.tasks = load_stage1_tasks() if tasks is None else tasks
 
         self.session: Stage1PlannerSession | None = None
@@ -171,9 +215,10 @@ class Stage1BehaviorPolicy:
         _, batch = self.high._prepare_branch_batch([raw])
         if "samples" not in batch or "pixel_values" not in batch:
             raise RuntimeError("high processor output lacks samples/pixel_values")
-        samples = _strip_target_free_forbidden(
-            [dict(s) for s in batch["samples"]], self.high_forbidden
-        )
+        samples = [
+            _target_free_planner_sample(dict(sample), self.high_forbidden)
+            for sample in batch["samples"]
+        ]
         batch = self.high._branch_device(batch)
         tokens_before = None
         with torch.no_grad(), self.high._branch_context():
@@ -335,8 +380,8 @@ def main() -> None:
                         help="official evaluator connects here (default 10100)")
     parser.add_argument("--action_steps", type=int, default=16,
                         help="steps served per low FM chunk; training anchors replan every 16 frames")
-    parser.add_argument("--max_new_tokens", type=int, default=160,
-                        help="planner generation budget; <HL_END> rejection applies above it")
+    parser.add_argument("--max_new_tokens", type=int, default=None,
+                        help="planner generation budget; defaults to the reviewed model config")
     parser.add_argument("--bridge_dir", type=Path,
                         default=SCRIPTS_DIR / "behavior_bridge")
     parser.add_argument("--tasks_path", type=Path, default=None,
