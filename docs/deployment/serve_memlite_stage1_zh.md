@@ -83,6 +83,38 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1   # 防止启动时访问 HF
 启动日志出现 `Exact restore verified`（逐张量校验，约 1–3 分钟）和
 `Policy server listening on ws://0.0.0.0:<port>` 即就绪。
 
+### 4.1 两个进程、各自独立
+
+high 与 low 是**两个相互独立的 server 进程**，无任何内置编排：
+
+| 进程 | `--branch` | 建议端口 | 显存（实测 A800 80G） | 输出 |
+|------|-----------|---------|----------------------|------|
+| 高层 planner | `high` | 10050 | ≈12.5 GB | 子目标/结果文本（`cot_text`）+ 动作 chunk |
+| 低层 FM policy | `low` | 10051 | ≈12.5 GB | 16 步动作 chunk |
+
+两个进程可以放同一张卡（合计约 25GB < 80GB），也可以
+`--device cuda:0` / `cuda:1` 分卡。**两者之间的衔接（何时 replan、把 planner
+的子目标文本传到低层）由客户端编排**，与官方评测时 bridge 的做法一致：
+拿到高层的子目标文本后，拼进低层请求的 `obs["task"]`（或用 `"任务 [PLAN] 子目标"`
+格式由 server 自动拆分出 `plan` 字段）。本脚本只保证两端模型各自可用，
+不内置这条编排循环。
+
+### 4.2 观测协议要点
+
+客户端以 msgpack 发送观测 dict（详见 `docs/deployment/serve_policy_mem_zh.md`）：
+
+- 必填：`images`（shape_meta 定义的三个相机键，`[C,H,W]` uint8）、
+  `state`（见同文档的 state 键列表）、`task`（任务指令字符串）
+- 可选：`plan`、`coarse_task`、`frequency`；`task` 中含 `[PLAN]` 时自动拆出 `plan`
+- 响应：`{"action": ..., "need_obs": ...}`；predict_cot 模型（high）额外返回 `cot_text`
+- `--action_steps 1` 为逐帧实时（RTC）模式，默认 16 为 chunk 复用模式
+
+```bash
+# RTC 模式示例
+.venv/bin/python scripts/serve_memlite_stage1.py \
+    --branch low --root $DEPLOY_ROOT --port 10051 --action_steps 1
+```
+
 ### 5. 自检客户端
 
 ```python
