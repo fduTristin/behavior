@@ -104,6 +104,19 @@ asyncio.run(t())
 - **缺 `stats.json` / `B-dataset-stats.json` / `action_tokenizer.pt`**：第 3 步
   下载不完整，四个运行时资产缺一不可（high/low 的归一化统计文件不同，不能混用）。
 - **正式 BEHAVIOR 评测桥接**（robodojo bridge、官方任务指令列表）不在本仓库内；
-  本 server 是裸 policy server，官方评测需另接团队的 bridge 服务。
+  本 server 是裸 policy server，官方评测需另接团队的 bridge 服务（见下节"bridge 说明"）。
+
+## bridge 说明（官方评测才需要）
+
+- bridge = `/mnt/sdc1/robodojo/behavior_bridge_staging/serve_behavior_policy_mem.py`，
+  官方 BEHAVIOR 评测桥接：23 维 wire 协议、episode reset、初始 memory 注入、
+  官方任务指令（`/mnt/sdc1/xhz/BEHAVIOR2026/2026-challenge-demos/meta/tasks.jsonl`）、
+  `/healthz` 检查。`scripts/serve_policy_memlite_fm.py` 通过 `load_bridge()` 动态加载它。
+- **该文件从未进入任何 git 分支**，只在 robodojo 集群（队友侧存储）上存在；
+  本部署分支的 `serve_memlite_stage1.py` 不依赖 bridge。
+- 只做策略推理/对接自有客户端 → 不需要 bridge。
+- 要跑官方评测 → 需从队友处拷贝 bridge 目录和 `tasks.jsonl` 到新机器，
+  用 `--bridge-dir` / `--tasks_path` 指定路径后使用 `serve_policy_memlite_fm.py` 路线；
+  注意该路线还要求 checkpoint 附带六帧 planner 契约，stage1 checkpoint 需先改造适配。
 - 端口习惯沿用：高层 10050，低层 10051。
 - 不需要把训练数据集拷到新机器：100 个任务的 prompt 模板已固化在 `recipe.json`。
