@@ -154,8 +154,11 @@ asyncio.run(t())
      团队仓库至今没有发布过 stage1 的官方编排运行时（旧 `serve_policy_memlite_fm.py`
      的六帧/契约断言与 stage1 的 `obs_size=1`、planner-outcome 六字段协议不兼容），
      这部分需要按 `g05.utils.memlite_skill_protocol` 的协议规范新写适配；
-  2. **官方 100 任务指令表**：原路径 `/mnt/sdc1/xhz/BEHAVIOR2026/2026-challenge-demos/meta/tasks.jsonl`
-     未随 bridge 拷来，需队友另行提供；
+  2. **官方 100 任务指令表**：本机已有
+     `datasets/2026-challenge-demos/datasets/fduTristin--2026-challenge-demos/snapshots/master/meta/tasks.jsonl`
+     （100 行，`task_index`/`task` 字段与 bridge 读取器匹配；任务名与 stage1 发布
+     manifest 的 task_names 逐一对应）。部署时把这个文件拷到新机器，
+     用 `--tasks_path` 指向即可，无需再向队友索取；
   3. **初始 memory 覆盖范围**：bridge 快照只覆盖 task_id 0–4，100 任务需按
      训练数据使用的 canonical 格式扩展（`Task=<id>; Completed=none.`）。
 - 只做策略推理/对接自有客户端 → 用 `serve_memlite_stage1.py`，不需要 bridge。
