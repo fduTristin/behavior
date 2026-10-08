@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Send synthetic official-protocol observations to the stage-1 server.
 
-This exercises the real websocket handshake, reset semantics, planner AR,
-low-level FM chunk, and 23-dimensional action response without starting
-OmniGibson.  It is a connectivity/runtime smoke test, not a task-success test.
+This exercises the real WebSocket handshake, reset semantics and strict
+planner admission without starting OmniGibson.  If the out-of-distribution
+zero images happen to yield a closed planner event, it also checks the low FM
+chunk and 23-dimensional action response.  A strict planner rejection is not
+a positive end-to-end result; use a real or reviewed cached evaluator frame
+for that.  This script is never a task-success test.
 """
 from __future__ import annotations
 

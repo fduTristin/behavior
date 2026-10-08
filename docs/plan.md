@@ -10,6 +10,13 @@
 
 ## 实时进度（最新记录在前）
 
+### 2026-10-08 12:24–12:31（北京时间）：完整 server 已启动，环境与 low 通过，high AR 闭合仍阻塞（Codex / NODE-STAGE1-E2E）
+
+- 新权限已生效。复核 `nvidia-smi` 后确认旧 low `3361174`、high `3361341`、E2E `3395333` 是当时全部 GPU compute 进程；按精确 PID 发送 `TERM`，三者两秒内正常退出，8 卡 compute 归零，没有使用 `KILL`。随后从 `fix/node-stage1-e2e-20261008` 在已有 `behavior-server` tmux 以 GPU0/10110 启动完整 high+low server；当前 PID `3445679`，双 checkpoint 精确恢复，常驻约18.9GiB，healthz `OK`，official 握手 G0.5/R1Pro/23D/16steps 通过。
+- 正向 official 单请求尚未通过：全零 synthetic observation 与 task0 radio diffuse 资产替代图都使 high planner 重复 active-skills/memory，1024 token 内未到 `<HL_END>`；strict server 正确返回 WebSocket 1011，未提交 planner 事件、未进入 low，也未返回伪动作。昨天本机 synthetic smoke 日志已有相同 OOD 失败，故不能把全零图当正向验收输入，但也不能据此声称真实 evaluator 输入会通过。
+- 为隔离 low，另在 GPU1 用同一 low checkpoint、canonical task0 NAVIGATE bundle 和 official 图像/状态映射直接执行：32-step horizon，首步映射为有限 `(23,)` action，L2 `1.420634`，总 infer 约7.79s；进程退出后 GPU1 释放。剩余缺口收敛到 high AR 自由生成闭合。server 保持在 GPU0 运行；证据日志位于 `/run/ti/BEHAVIOR2026/logs/serve_e2e_10110_20261008.log`、`/run/ti/BEHAVIOR2026/logs/smoke_official_10110_20261008.log`、`/run/ti/BEHAVIOR2026/logs/smoke_official_radio_asset_10110_20261008.log`、`/run/ti/BEHAVIOR2026/logs/low_fm_direct_gpu1_20261008.log`。下一步需真实 evaluator/cached episode 首帧；若仍不闭合，再做同一样本 teacher-forced/free-generation 对照，禁止拼接伪 `<HL_END>`。
+- 网络权限恢复后 `git fetch origin --prune` 已成功；`origin/deploy/memlite-stage1` 仍为 `018cce308b27`，与本适配分支基线一致，不再有“远端可能前进但未核实”的缺口。
+
 ### 2026-10-08 12:20（北京时间）：宿主旧服务停服与 tmux 启动受执行 namespace 阻塞（Codex / NODE-STAGE1-E2E）
 
 - 按用户要求二次核对出本项目三个旧 GPU 服务主进程：low `3361174`（cuda:0/10051）、high `3361341`（cuda:1/10050）、旧完整 E2E `3395333`（cuda:4/10100）。逐个校验命令行后发送 `TERM`，当前 Codex shell 对三者均返回 `No such process`；随后宿主 `/proc` 仍列出相同 PID、启动时间和命令，故三者及其 TorchInductor worker **没有被实际停止**，也没有使用宽泛 `pkill` 或升级为强制信号。

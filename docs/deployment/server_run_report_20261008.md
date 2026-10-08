@@ -7,9 +7,9 @@
 
 ## 当前结论
 
-闭环 server 的已知代码阻塞已经修复，当前状态是“代码已具备 GPU 冒烟条件，真实 GPU 闭环尚未验收”。现在最优先需要的不是继续改模型或补依赖，而是在能访问 CUDA 设备并允许监听 localhost 端口的正常 Pod shell 中启动新分支，用 synthetic official client 完成一帧真实推理。
+完整 high+low server 已经从新分支在 `behavior-server` tmux session 启动，当前运行于 GPU 0 / 端口 `10110`，PID 为 `3445679`，`/healthz` 返回 `OK`。两个 checkpoint 均精确恢复，常驻显存约 18.9 GiB；官方 WebSocket 握手也已通过。
 
-2026-10-08 12:20（北京时间）按用户要求尝试清理旧 GPU 服务并在 `behavior-server` tmux session 启动完整服务，但当前 Codex shell 位于独立 PID/network/device namespace：它能通过宿主 `/proc` 列出旧进程，却不能向这些宿主 PID 发信号；也不能连接已有 tmux socket或创建隔离 tmux socket。因此本次没有实际停止任何进程，也没有制造一个无法工作的假 server session。需要从正常 Pod shell 执行下文的“宿主操作交接”。
+当前不能宣称“正向闭环已经跑通”：全零 synthetic observation 和 radio 纹理替代图两次请求都在 high planner 自由生成阶段达到 1024-token 上限，未生成 `<HL_END>`，严格服务按设计关闭连接，因而没有进入同一 WebSocket 请求的 low chunk。低层已另用同一 low checkpoint 在 GPU 1 直接实测通过：产生 32-step horizon，并成功映射为有限的 `(23,)` official action。剩余缺口已收敛为“用真实 BEHAVIOR evaluator 首帧复验 high AR；若仍不闭合，则处理 high checkpoint 的自由生成/闭合能力”，不再是环境、CUDA、checkpoint restore、tmux、协议或 low FM 问题。
 
 Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU graphics。旧报告中的 graphics capability 问题只阻塞 OmniGibson 仿真，不阻塞 high planner、low FM 和 WebSocket server 的独立验证。
 
@@ -21,7 +21,7 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 /run/ti/BEHAVIOR2026/behavior-node-stage1
 ```
 
-它基于本地可用的 `deploy/memlite-stage1@018cce3` 创建。原 `/run/ti/BEHAVIOR2026/behavior` 仍被旧的 10050、10051 和 10100 服务进程引用，未切分支、未 pull、未热改。2026-10-08 12:20 的停服尝试受 PID namespace 隔离阻塞，三个旧服务仍在运行。
+它基于本地可用的 `deploy/memlite-stage1@018cce3` 创建。原 `/run/ti/BEHAVIOR2026/behavior` 未切分支、未 pull、未热改。2026-10-08 12:24 权限生效后，旧的 10050、10051 和 10100 服务均按精确 PID 发送 `TERM`，两秒内正常退出；没有使用宽泛 `pkill` 或 `KILL`。
 
 已完成的本节点适配包括：
 
@@ -33,7 +33,7 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 - planner token budget 默认继承 checkpoint recipe 的审核值，不再沿用旧的 160-token 默认值；当前 checkpoint 配置为 1024。
 - 新增 `scripts/smoke_official_client.py`，可在不启动 OmniGibson 的情况下验证握手、reset、planner AR、low FM 和 23 维动作响应。
 
-当前分支尚未 push。`git fetch origin --prune` 因本执行环境无法解析 `github.com` 而失败，所以 `018cce3` 是本地可证明的最新 remote-tracking 基线，不代表已经核实 GitHub 此刻没有更新。
+当前分支尚未 push。权限恢复后已于 2026-10-08 重新执行 `git fetch origin --prune` 并成功；`origin/deploy/memlite-stage1` 仍为 `018cce308b27`，与本分支基线一致，远端部署分支没有需要补迁的新提交。
 
 ## 已完成验证
 
@@ -44,15 +44,21 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 | 缺失 planner format 模块 | 导入和单测通过 | receipt、batch、`<HL_END>` token 一致性均有回归 |
 | 真实 high recipe 和 processor | 通过 | 三相机输出均为 `[1,3,256,256]` |
 | Target-free planner prefix | 通过 | 真实 processor 输出经转换后通过模型自身 `_validate_target_free_high_prefix` |
-| CLI 和 smoke client | 编译及 `--help` 通过 | 尚未连接真实 GPU server |
-| 新分支 high 和 low checkpoint GPU restore | 未执行 | 当前 Codex 沙箱无 CUDA 设备 |
-| Planner AR 到 `<HL_END>` | 未执行 | 需要真实 CUDA 推理 |
-| Low FM chunk 和 23 维动作响应 | 未执行 | 需要 planner AR 首先成功 |
+| 完整 server、healthz、official handshake | 通过 | `behavior-server` / GPU 0 / 10110；握手为 G0.5、R1Pro、23D、16 steps |
+| 新分支 high 和 low checkpoint GPU restore | 通过 | high 950 tensors、low 1138 tensors 精确恢复 |
+| Planner AR 到 `<HL_END>` | 未通过 | 两个非真实 evaluator 输入均重复 active-skills/memory，1024 token 内不闭合 |
+| Low FM 和 23 维动作映射 | 独立通过 | GPU 1 直接测试：horizon 32、shape `(23,)`、全部有限、L2 `1.420634` |
+| 同一 official 请求的 planner→low→action | 未通过 | high 严格拒绝后连接关闭，未进入 low；不能用伪 planner 或伪动作冒充闭环 |
 | OmniGibson rollout | 未执行 | 另受 graphics capability 阻塞 |
 
-当前 Codex 执行沙箱中的实际环境是：没有 `/dev/nvidia*`，`torch.cuda.is_available()` 为 `False`，`cudaGetDeviceCount` 返回 error 304，且 localhost socket 监听受限。强制在 CPU 上构造模型会在 FLA/Triton 初始化时因没有 active CUDA driver 退出。这些结果说明本执行沙箱不能承担最终 GPU 验收，不等于 checkpoint 或适配代码加载失败。
+运行证据保存在：
 
-## 2026-10-08 宿主操作交接
+- server：`/run/ti/BEHAVIOR2026/logs/serve_e2e_10110_20261008.log`
+- 全零 official client：`/run/ti/BEHAVIOR2026/logs/smoke_official_10110_20261008.log`
+- radio 资产 official client：`/run/ti/BEHAVIOR2026/logs/smoke_official_radio_asset_10110_20261008.log`
+- low FM 独立 GPU 测试：`/run/ti/BEHAVIOR2026/logs/low_fm_direct_gpu1_20261008.log`
+
+## 2026-10-08 宿主操作记录
 
 12:20 二次核对确认以下三个主进程均属于本项目旧服务：
 
@@ -62,7 +68,7 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 | `3361341` | `serve_memlite_stage1.py --branch high` | `cuda:1` | `10050` |
 | `3395333` | `serve_memlite_stage1_behavior.py` | `cuda:4` | `10100` |
 
-当前 shell 对每个 PID 执行 `kill -TERM` 都返回 `No such process`，但随后从宿主 `/proc` 仍能看到相同 PID、启动时间和命令行。这是 PID namespace 隔离，不是进程已经退出。三个主进程及其 TorchInductor worker 因而都没有被本次操作停止。
+12:20 的受限 shell 对每个 PID 执行 `kill -TERM` 都返回 `No such process`，但随后从宿主 `/proc` 仍能看到相同 PID、启动时间和命令行。这是当时的 PID namespace 隔离，不是进程已经退出。
 
 同一 shell 的运行能力预检结果为：
 
@@ -71,7 +77,7 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 - 共享运行环境是 PyTorch `2.7.1+cu128`，但 `torch.cuda.is_available()` 为 `False`、device count 为 `0`，并且 `/dev/nvidia*` 不存在。
 - 创建 IPv4 socket即返回 `PermissionError: Operation not permitted`。
 
-因此只有正常 Pod shell 能完成以下宿主操作。先逐 PID 复核命令行再温和停止，不能使用 `pkill python`：
+12:24 权限变更生效后重新核对了 PID、命令行和 `nvidia-smi` compute 列表；三者正是当时全部 GPU compute 进程。以下操作已经执行完成：
 
 ```bash
 for pid in 3361174 3361341 3395333; do
@@ -86,7 +92,7 @@ ps -p 3361174,3361341,3395333 -o pid=,ppid=,stat=,args=
 nvidia-smi
 ```
 
-进程终止不可恢复，但这些服务可用原命令重新启动；checkpoint、代码和日志不会因 `TERM` 被删除。确认旧服务退出、目标 GPU 至少有 30 GiB 可用显存且 `10110` 未监听后，创建用户指定的完整服务会话（下面以释放后的 GPU 0 为例）：
+进程终止不可恢复，但这些服务可用原命令重新启动；checkpoint、代码和日志没有因 `TERM` 被删除。旧服务退出后 GPU 0 有约 70.8 GiB 可用显存，随后使用已有的 `behavior-server` 会话执行了等价于下列命令的启动：
 
 ```bash
 tmux new-session -d -s behavior-server \
@@ -105,16 +111,15 @@ tmux capture-pane -p -t behavior-server -S -80
 
 若 `nvidia-smi` 显示 GPU 0 不满足余量，应只把 `cuda:0` 换成实际空闲卡号，不能在未核对进程归属时抢占其他卡。server 报 ready 后按下文命令执行 health check 和 official synthetic 单请求。
 
-## 立即需要的条件
+## 现在仍需要的条件
 
-完成 server 验收需要以下四项：
+完成正向闭环验收还需要以下三项：
 
-1. 一个正常的 Pod shell，能看到 `/dev/nvidiactl`、目标 `/dev/nvidiaN`，且 `torch.cuda.is_available()` 为 `True`。
-2. 一张经 `nvidia-smi` 确认空闲的 GPU。旧实测双模型常驻约 18.8 GiB，建议启动前至少保留 30 GiB 可用显存，不能仅凭卡号假定空闲。
-3. 一个未占用的新端口，建议使用 `10110`，避免与旧 10100 服务混淆。
-4. 对新分支执行一次 synthetic official 单请求。只有看到 planner、low chunk 和 23 维动作三段证据，才能把 server 状态改为“跑通”。
+1. 一帧真实 BEHAVIOR evaluator 初始观测，或训练分布中的已审核/缓存 episode 观测。部署包当前只有权重、统计量和资产，没有训练 episode 视频；全零图和物体 diffuse texture 都不能作为正向生成验收输入。
+2. 用该真实观测通过 official wire 复验 high AR。若仍在 1024 token 内不到 `<HL_END>`，需要对同一样本做 teacher-forced prefix 与 free generation 对照，定位 high checkpoint 的生成闭合/缓存/解码问题；不能放宽严格 admission 或在 server 中拼接伪 `<HL_END>`。
+3. high 通过后，在同一请求中观察 `STAGE1_PLANNER_EVENT` → `STAGE1_LOW_CHUNK` → `(23,)` action，才可把 server 状态改为“跑通”。
 
-不需要重新下载模型，不需要改 checkpoint，不需要 Vulkan，也不需要先启动 OmniGibson。
+当前不需要重新下载模型、修改 low checkpoint或增加 CUDA 依赖。若使用真实 official evaluator 直接产生观测，则仍需要可运行的 OmniGibson graphics 环境；若能提供缓存的真实 wire observation，则 policy server 验收本身不需要 Vulkan。
 
 ## 启动步骤
 
@@ -152,7 +157,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 curl --fail --max-time 5 http://127.0.0.1:10110/healthz
 ```
 
-然后在第二个正常 shell 中发送一帧 synthetic official observation：
+然后可在第二个 shell 中发送一帧 synthetic official observation。这个命令现在只作为握手、严格失败和异常可观测性测试；全零图像不能作为正向闭环通过条件：
 
 ```bash
 cd /run/ti/BEHAVIOR2026/behavior-node-stage1
@@ -178,7 +183,7 @@ cd /run/ti/BEHAVIOR2026/behavior-node-stage1
 - 最后出现 `STAGE1_ACTION`，客户端收到 shape 为 `(23,)` 且全部有限的 float32 动作。
 - 单次测试结束后检查 GPU 使用和进程归属，只停止本次新启动的 10110 服务，不处理旧服务。
 
-Synthetic observation 是全零图像和本体状态，因此生成的技能内容及动作质量没有任务效果含义。它只证明代码、权重、协议和双模型推理链路连通。
+Synthetic observation 是全零图像和本体状态。若它成功，只能证明代码、权重和协议链路在该输入上连通；若 high planner 像本次一样严格拒绝，也不能据此单独断言真实 evaluator 输入必然失败。正向验收必须使用真实或已审核缓存观测。
 
 ## 常见失败与处理方向
 
@@ -190,18 +195,18 @@ Synthetic observation 是全零图像和本体状态，因此生成的技能内�
 | `planner max_new_tokens` 不一致 | 显式传入了旧值 160 | 删除该参数，或传 checkpoint 配置值 1024 |
 | `Operation creation failed` 或 CuTe JIT 错误 | 实际导入了未适配的旧 `vision.py` | 核对 `g05` 的实际 import 路径必须来自 `behavior-node-stage1/src` |
 | Target-free 字段或 template 校验失败 | 启动了旧 server 脚本 | 核对脚本来自新 worktree，并保存完整 traceback |
+| `planner AR response hit generation bound before <HL_END>` | high 自由生成不闭合；本次两个非真实输入均已复现 | 先用真实 evaluator/cached episode 复验；仍失败则做同样本 teacher-forced/free-generation 对照，不拼接伪结束符 |
 | Planner 成功但没有 low chunk | low processor、normalizer 或动作后处理失败 | 保存 `STAGE1_PLANNER_EVENT` 后的首个 traceback，不降级返回伪动作 |
 
 ## Server 通过后仍需完成的事项
 
 Server 单请求通过后还有三项工作：
 
-1. 恢复 GitHub 网络后执行 `git fetch origin --prune`，确认远端 `deploy/memlite-stage1` 是否又有更新。如果远端已前进，应审查差异后把 `78dcc61` 迁移到新基线，不能盲目覆盖。
-2. 由另一成员独立 review 本次适配，再 push feature 分支或按团队流程合入部署分支。
-3. 若目标是完整 BEHAVIOR rollout，还需要 graphics-capable OmniGibson 节点，或让平台为仿真 Pod 提供 NVIDIA graphics/Vulkan 能力。该条件与 policy server 的 compute-only 验收相互独立。
+1. 由另一成员独立 review 本次适配，再 push feature 分支或按团队流程合入部署分支。远端 `deploy/memlite-stage1` 已在 2026-10-08 重新 fetch 并确认仍为本分支基线 `018cce3`。
+2. 若目标是完整 BEHAVIOR rollout，还需要 graphics-capable OmniGibson 节点，或让平台为仿真 Pod 提供 NVIDIA graphics/Vulkan 能力。该条件与 policy server 的 compute-only 验收相互独立。
 
 ## 当前最短路径
 
-当前最短路径是：在正常 CUDA shell 中选择空闲 GPU → 从 `behavior-node-stage1@78dcc61` 启动 10110 → 运行一次 `smoke_official_client.py` → 保存 server 日志和客户端 JSON → 根据上述跑通标准更新状态。
+当前最短路径是：保持现有 `behavior-server` / 10110 运行 → 提供一帧真实 evaluator 或缓存 episode observation → 复验 high 是否到 `<HL_END>` → 若通过则收集同一请求的 planner/low/23D action 证据；若仍失败，则对该真实样本做 high teacher-forced/free-generation 对照。
 
-在这一步成功前，不需要继续修改训练超参、重训模型或启动 OmniGibson。
+在真实输入复验前，不应凭 synthetic OOD 失败直接重训，也不应修改 strict admission 或伪造 planner 事件。
