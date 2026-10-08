@@ -1,5 +1,7 @@
 # 三人协作计划：MEM-Lite + FM 方法验证
 
+2026-10-08 15:02（北京时间）NODE-STAGE1-E2E 更新：Codex 将用当前 GPU0/10110 policy server 和本机 GPU1 隔离图形运行时，执行 `picking_up_trash` public_test 0–4（实例301–305）各1次真实 evaluator rollout并写视频。由于 server planner/session 为共享单例、bridge 只接受 singleton observation，5实例必须在独立 `behavior-eval-trash` tmux 内串行运行，不能并发或以 `num_envs=5` 冒充有效批评测；单实例墙钟上限5400s，server/图形 fatal 即停，日志及输出路径登记于 `docs/plan.md`。
+
 2026-10-08 14:39（北京时间）NODE-STAGE1-E2E 更新：Codex 已按 `10.0.0.11` 的已验证方案在本节点建立隔离 NVIDIA 580.95.05 用户态图形运行时；Vulkan 8卡枚举及 GPU1 OmniGibson `launch/play/step/render/shutdown` 均通过，GPU0 现有 policy server 不受影响。此前“必须由平台开放 graphics capability”的依赖已解除并更正；剩余集成门收敛为真实 evaluator observation 下的 high `<HL_END>`、low FM、23D action 全链路 rollout及独立review，不以空场景图形通过记作任务SR。
 
 2026-10-08 02:17（北京时间）Codex / NODE-STAGE1-E2E：按用户要求从本地 `deploy/memlite-stage1@018cce3` 建独立 `fix/node-stage1-e2e-20261008` worktree，负责本节点 planner 缺失模块与 shape/layout/target-free/Blackwell 适配、CPU 合同及有界 server 冒烟；旧 10050/10051/10100 服务不热改，不启动训练/正式仿真。远端 fetch 因容器 DNS 失败，当前“最新”仅指本地可用 remote-tracking ref。
