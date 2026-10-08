@@ -10,11 +10,12 @@
 
 ## 实时进度（最新记录在前）
 
-### 2026-10-08 15:02（北京时间）：`picking_up_trash` 五实例真实 evaluator 启动准备（Codex / NODE-STAGE1-E2E）
+### 2026-10-08 14:54–15:01（北京时间）：`picking_up_trash` 五实例真实 evaluator 启动与 bridge 适配（Codex / NODE-STAGE1-E2E）
 
 - 主要假设：本节点已验证的隔离 NVIDIA 580.95.05 图形运行时可支撑真实 OmniGibson evaluator，真实相机观测可进一步验证 high `<HL_END>` → low FM → 23D action 闭环；唯一负责人为 Codex。固定 policy server 源码 `654f8bc`、BEHAVIOR-1K `bd049de31`，checkpoint 与运行中 GPU0/10110 server 保持不变。
 - 评测口径固定为任务 `picking_up_trash`（官方 task ID 1）、`public_test` 索引 0–4（实例 301–305）、每实例 1 rollout、默认官方步数上限、写视频。当前 bridge/server 是单 episode 状态且观测合同为 singleton，故 5 个实例在同一 evaluator tmux 中以 `num_envs=1` **串行**运行，禁止并发 client 相互重置共享 planner 状态。
 - 仿真固定物理 GPU1（已通过 launch/play/physics/RTX/render/shutdown），GPU0 server 不动；单实例墙钟保护 5400s，server health 失败则停止后续实例。计划输出 `/run/ti/BEHAVIOR2026/BEHAVIOR-1K/OmniGibson/outputs/picking_up_trash_5inst_20261008`，总日志 `/run/ti/BEHAVIOR2026/logs/eval_picking_up_trash_5inst_20261008.log`，tmux `behavior-eval-trash`。停止条件为 5 个实例完成、单实例超时、server 失联或图形/CUDA fatal；不自动追加 rollout、实例或训练。
+- 首次 index0/instance301 已完成真实场景、R1Pro、RTX 与 task reset 初始化并连接 10110，但首帧被 bridge 严格拒绝：官方 `BatchedEvaluator` 即使 `num_envs=1` 也发送 singleton-batched RGBA，实测 `head_rgb=(1,224,224,4)`；这不是并行评测或图形失败。已停止后续重复初始化，在 `_to_chw_uint8` 仅增加 singleton batch 解包并保留 RGBA→RGB，同时明确拒绝 batch>1；相关 CPU 回归 20 passed / 1 async socket skipped。待提交并重启原配置 server 后从 index0 重跑。
 
 ### 2026-10-08 14:28–14:39（北京时间）：本节点用户态 Vulkan/RTX 适配通过（Codex / NODE-STAGE1-E2E）
 

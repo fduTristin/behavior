@@ -140,10 +140,24 @@ def _explicit_memory_from_payload(payload: dict[str, Any]) -> str:
 
 
 def _to_chw_uint8(image: Any, camera_name: str) -> np.ndarray:
-    """Convert OmniGibson HWC RGB/RGBA (or CHW) to G0.5 CHW uint8."""
+    """Convert one evaluator RGB(A) image to G0.5 CHW uint8.
+
+    The official evaluator preserves the logical environment axis even when
+    ``num_envs=1``, so websocket observations arrive as ``[1,H,W,C]``.  This
+    bridge intentionally serves one episode at a time; accept that singleton
+    axis while continuing to reject true multi-environment batches.
+    """
     array = _as_numpy(image)
+    if array.ndim == 4:
+        if array.shape[0] != 1:
+            raise ValueError(
+                f"{camera_name} must contain one environment, got shape {array.shape}"
+            )
+        array = array[0]
     if array.ndim != 3:
-        raise ValueError(f"{camera_name} must be 3D, got shape {array.shape}")
+        raise ValueError(
+            f"{camera_name} must be HWC/CHW or singleton-batched, got shape {array.shape}"
+        )
 
     if array.shape[-1] in (3, 4):
         array = array[..., :3].transpose(2, 0, 1)

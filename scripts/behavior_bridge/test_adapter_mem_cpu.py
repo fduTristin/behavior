@@ -103,6 +103,32 @@ def test_mapping() -> None:
         raise AssertionError("60D proprio was not rejected")
 
 
+def test_singleton_batched_rgba_mapping() -> None:
+    tasks = {0: "Turn on the radio."}
+    observation = make_observation()
+    observation = {
+        key: value[None] if isinstance(value, np.ndarray) else value
+        for key, value in observation.items()
+    }
+    converted = adapter.behavior_obs_to_g05(observation, tasks)
+    assert converted["images"]["head_rgb"].shape == (3, 12, 16)
+    assert converted["images"]["left_wrist_rgb"].shape == (3, 10, 14)
+    assert converted["images"]["right_wrist_rgb"].shape == (3, 8, 6)
+    np.testing.assert_array_equal(
+        converted["state"]["left_arm"], np.arange(61, dtype=np.float32)[3:10]
+    )
+
+    observation["robot_r1::robot_r1:zed_link:Camera:0::rgb"] = np.zeros(
+        (2, 12, 16, 4), dtype=np.uint8
+    )
+    try:
+        adapter.behavior_obs_to_g05(observation, tasks)
+    except ValueError as error:
+        assert "one environment" in str(error)
+    else:
+        raise AssertionError("A true multi-environment image batch was not rejected")
+
+
 def test_action_mapping() -> None:
     split_action = {
         "base_qvel": np.asarray([1, 2, 3], dtype=np.float32),
