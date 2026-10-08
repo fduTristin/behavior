@@ -10,6 +10,12 @@
 
 ## 实时进度（最新记录在前）
 
+### 2026-10-08 12:20（北京时间）：宿主旧服务停服与 tmux 启动受执行 namespace 阻塞（Codex / NODE-STAGE1-E2E）
+
+- 按用户要求二次核对出本项目三个旧 GPU 服务主进程：low `3361174`（cuda:0/10051）、high `3361341`（cuda:1/10050）、旧完整 E2E `3395333`（cuda:4/10100）。逐个校验命令行后发送 `TERM`，当前 Codex shell 对三者均返回 `No such process`；随后宿主 `/proc` 仍列出相同 PID、启动时间和命令，故三者及其 TorchInductor worker **没有被实际停止**，也没有使用宽泛 `pkill` 或升级为强制信号。
+- 根因是本工具 shell 位于独立 PID/network/device namespace：默认 tmux socket和 workspace 隔离 tmux socket均 `Operation not permitted`；无 `/dev/nvidia*`，共享 PyTorch 2.7.1+cu128 报 CUDA unavailable/device count 0；创建 IPv4 socket也被拒绝。由此无法在本会话创建可工作的 `behavior-server` tmux、加载双 checkpoint 或运行 official client，不把未启动冒充闭环测试。
+- 已更新 `docs/deployment/server_run_report_20261008.md`，记录仍存活的精确 PID、宿主 shell 安全停服步骤、`behavior-server` tmux 启动命令及验收命令。下一步必须在正常 Pod shell 中完成 TERM→GPU/端口复核→10110 启动→healthz→单请求 smoke，并保存 server/client 日志。
+
 ### 2026-10-08 02:17（北京时间）：本节点 stage1 闭环适配开始（Codex / NODE-STAGE1-E2E）
 
 - 用户要求以当前 `deploy/memlite-stage1` 新建分支做本节点适配并复验闭环 server。原 checkout 仍被 10050/10051/10100 服务引用，不热改；已从本地最新可用基线 `018cce308b272f86d9a39db1a38f704a86ab6b4b` 建独立分支 `fix/node-stage1-e2e-20261008` 和 worktree `/run/ti/BEHAVIOR2026/behavior-node-stage1`。

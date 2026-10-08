@@ -9,6 +9,8 @@
 
 闭环 server 的已知代码阻塞已经修复，当前状态是“代码已具备 GPU 冒烟条件，真实 GPU 闭环尚未验收”。现在最优先需要的不是继续改模型或补依赖，而是在能访问 CUDA 设备并允许监听 localhost 端口的正常 Pod shell 中启动新分支，用 synthetic official client 完成一帧真实推理。
 
+2026-10-08 12:20（北京时间）按用户要求尝试清理旧 GPU 服务并在 `behavior-server` tmux session 启动完整服务，但当前 Codex shell 位于独立 PID/network/device namespace：它能通过宿主 `/proc` 列出旧进程，却不能向这些宿主 PID 发信号；也不能连接已有 tmux socket或创建隔离 tmux socket。因此本次没有实际停止任何进程，也没有制造一个无法工作的假 server session。需要从正常 Pod shell 执行下文的“宿主操作交接”。
+
 Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU graphics。旧报告中的 graphics capability 问题只阻塞 OmniGibson 仿真，不阻塞 high planner、low FM 和 WebSocket server 的独立验证。
 
 ## 当前代码状态
@@ -19,7 +21,7 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 /run/ti/BEHAVIOR2026/behavior-node-stage1
 ```
 
-它基于本地可用的 `deploy/memlite-stage1@018cce3` 创建。原 `/run/ti/BEHAVIOR2026/behavior` 仍被旧的 10050、10051 和 10100 服务进程引用，未切分支、未 pull、未热改，也未停止任何旧进程。
+它基于本地可用的 `deploy/memlite-stage1@018cce3` 创建。原 `/run/ti/BEHAVIOR2026/behavior` 仍被旧的 10050、10051 和 10100 服务进程引用，未切分支、未 pull、未热改。2026-10-08 12:20 的停服尝试受 PID namespace 隔离阻塞，三个旧服务仍在运行。
 
 已完成的本节点适配包括：
 
@@ -49,6 +51,59 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 | OmniGibson rollout | 未执行 | 另受 graphics capability 阻塞 |
 
 当前 Codex 执行沙箱中的实际环境是：没有 `/dev/nvidia*`，`torch.cuda.is_available()` 为 `False`，`cudaGetDeviceCount` 返回 error 304，且 localhost socket 监听受限。强制在 CPU 上构造模型会在 FLA/Triton 初始化时因没有 active CUDA driver 退出。这些结果说明本执行沙箱不能承担最终 GPU 验收，不等于 checkpoint 或适配代码加载失败。
+
+## 2026-10-08 宿主操作交接
+
+12:20 二次核对确认以下三个主进程均属于本项目旧服务：
+
+| PID | 服务 | 设备 | 端口 |
+| ---: | --- | --- | ---: |
+| `3361174` | `serve_memlite_stage1.py --branch low` | `cuda:0` | `10051` |
+| `3361341` | `serve_memlite_stage1.py --branch high` | `cuda:1` | `10050` |
+| `3395333` | `serve_memlite_stage1_behavior.py` | `cuda:4` | `10100` |
+
+当前 shell 对每个 PID 执行 `kill -TERM` 都返回 `No such process`，但随后从宿主 `/proc` 仍能看到相同 PID、启动时间和命令行。这是 PID namespace 隔离，不是进程已经退出。三个主进程及其 TorchInductor worker 因而都没有被本次操作停止。
+
+同一 shell 的运行能力预检结果为：
+
+- `tmux list-sessions` 连接 `/tmp/tmux-0/default` 返回 `Operation not permitted`。
+- 在 workspace 下尝试创建独立 tmux socket同样返回 `Operation not permitted`。
+- 共享运行环境是 PyTorch `2.7.1+cu128`，但 `torch.cuda.is_available()` 为 `False`、device count 为 `0`，并且 `/dev/nvidia*` 不存在。
+- 创建 IPv4 socket即返回 `PermissionError: Operation not permitted`。
+
+因此只有正常 Pod shell 能完成以下宿主操作。先逐 PID 复核命令行再温和停止，不能使用 `pkill python`：
+
+```bash
+for pid in 3361174 3361341 3395333; do
+  ps -p "$pid" -o pid=,ppid=,lstart=,args=
+done
+
+kill -TERM 3361174 3361341 3395333
+
+# 等待服务清理 TorchInductor 子进程后复核；只有仍存活且命令行未变化时才进一步处理。
+sleep 5
+ps -p 3361174,3361341,3395333 -o pid=,ppid=,stat=,args=
+nvidia-smi
+```
+
+进程终止不可恢复，但这些服务可用原命令重新启动；checkpoint、代码和日志不会因 `TERM` 被删除。确认旧服务退出、目标 GPU 至少有 30 GiB 可用显存且 `10110` 未监听后，创建用户指定的完整服务会话（下面以释放后的 GPU 0 为例）：
+
+```bash
+tmux new-session -d -s behavior-server \
+  -c /run/ti/BEHAVIOR2026/behavior-node-stage1 \
+  "/bin/bash -lc 'set -o pipefail; \
+    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+    /run/ti/BEHAVIOR2026/behavior/.venv/bin/python \
+    scripts/serve_memlite_stage1_behavior.py \
+    --root /run/ti/BEHAVIOR2026/memlite-stage1 \
+    --port 10110 --device cuda:0 2>&1 | \
+    tee /run/ti/BEHAVIOR2026/logs/serve_e2e_10110_20261008.log'"
+
+tmux list-sessions
+tmux capture-pane -p -t behavior-server -S -80
+```
+
+若 `nvidia-smi` 显示 GPU 0 不满足余量，应只把 `cuda:0` 换成实际空闲卡号，不能在未核对进程归属时抢占其他卡。server 报 ready 后按下文命令执行 health check 和 official synthetic 单请求。
 
 ## 立即需要的条件
 
