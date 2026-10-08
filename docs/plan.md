@@ -10,6 +10,13 @@
 
 ## 实时进度（最新记录在前）
 
+### 2026-10-08 14:28–14:39（北京时间）：本节点用户态 Vulkan/RTX 适配通过（Codex / NODE-STAGE1-E2E）
+
+- 对比 `10.0.0.11` 后更正旧环境结论：两节点都没有 `/dev/nvidia-modeset`、`/dev/nvidia-caps`，且 `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`；对方通过与 kernel driver `580.95.05` 匹配的完整 NVIDIA 用户态图形库及 `VK_ICD_FILENAMES` 正常运行。旧报告将仅解包 `libnvidia-gl` 后的失败归因于平台 device capability，证据不足。
+- 本机在 `/run/ti/BEHAVIOR2026/infra/nv580/runtime` 建立隔离运行时（约892MiB，不入Git），补齐同版本图形共享库，并按对方白名单只向子进程暴露27个图形库；未安装或覆盖系统库。新增 `scripts/with_node_graphics_runtime.sh`，严格检查驱动版本并注入 `LD_LIBRARY_PATH`/`VK_ICD_FILENAMES`。直接暴露完整驱动目录会覆盖 `libcuda` 并使 PhysX 找不到 CUDA，已通过图形库白名单消除。
+- 验证通过：Vulkan 1.3枚举8张 NVIDIA GPU；PyTorch CUDA仍枚举8卡；GPU1 上 OmniGibson 3.9.3 / Isaac Sim 5.1 完成 `launch -> play -> physics step -> RTX render -> shutdown`，退出码0，最终 Kit 日志 `BEHAVIOR-1K/OmniGibson/appdata/local/logs/Kit/OmniGibson/3.9/kit_20261008_143850.log` 无旧 Vulkan/Graphics/PhysX CUDA fatal signature。探针退出后GPU1回落4MiB，GPU0 `behavior-server`/10110继续healthz `OK`。
+- 适配说明见 `docs/deployment/node_graphics_runtime_20261008.md`。尚未执行完整 `turning_on_radio` evaluator rollout，high AR在真实观测上是否到 `<HL_END>`、low FM及23D action闭环仍待；本记录不是完整任务SR或策略通过结论。
+
 ### 2026-10-08 12:24–12:31（北京时间）：完整 server 已启动，环境与 low 通过，high AR 闭合仍阻塞（Codex / NODE-STAGE1-E2E）
 
 - 新权限已生效。复核 `nvidia-smi` 后确认旧 low `3361174`、high `3361341`、E2E `3395333` 是当时全部 GPU compute 进程；按精确 PID 发送 `TERM`，三者两秒内正常退出，8 卡 compute 归零，没有使用 `KILL`。随后从 `fix/node-stage1-e2e-20261008` 在已有 `behavior-server` tmux 以 GPU0/10110 启动完整 high+low server；当前 PID `3445679`，双 checkpoint 精确恢复，常驻约18.9GiB，healthz `OK`，official 握手 G0.5/R1Pro/23D/16steps 通过。

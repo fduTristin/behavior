@@ -13,6 +13,8 @@
 
 Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU graphics。旧报告中的 graphics capability 问题只阻塞 OmniGibson 仿真，不阻塞 high planner、low FM 和 WebSocket server 的独立验证。
 
+2026-10-08 14:39 更新：OmniGibson 图形阻塞也已通过隔离用户态 NVIDIA 580.95.05 运行时解除。Vulkan 现可枚举8卡，GPU1 上 `launch -> play -> physics step -> RTX render -> shutdown` 实测通过；说明见 `docs/deployment/node_graphics_runtime_20261008.md`。当前仍未执行完整 evaluator rollout，剩余阻塞是使用真实 evaluator observation 验证 high `<HL_END>` 及同请求 low/action 闭环，而不是图形环境。
+
 ## 当前代码状态
 
 新 worktree 位于：
@@ -49,7 +51,8 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 | Planner AR 到 `<HL_END>` | 未通过 | 两个非真实 evaluator 输入均重复 active-skills/memory，1024 token 内不闭合 |
 | Low FM 和 23 维动作映射 | 独立通过 | GPU 1 直接测试：horizon 32、shape `(23,)`、全部有限、L2 `1.420634` |
 | 同一 official 请求的 planner→low→action | 未通过 | high 严格拒绝后连接关闭，未进入 low；不能用伪 planner 或伪动作冒充闭环 |
-| OmniGibson rollout | 未执行 | 另受 graphics capability 阻塞 |
+| OmniGibson 图形启动与 step/render | 通过 | GPU1 空场景验证；不是完整任务 rollout |
+| OmniGibson evaluator rollout | 未执行 | 图形阻塞已解除；待真实场景和 policy 闭环验证 |
 
 运行证据保存在：
 
@@ -203,7 +206,7 @@ Synthetic observation 是全零图像和本体状态。若它成功，只能证�
 Server 单请求通过后还有三项工作：
 
 1. 由另一成员独立 review 本次适配，再 push feature 分支或按团队流程合入部署分支。远端 `deploy/memlite-stage1` 已在 2026-10-08 重新 fetch 并确认仍为本分支基线 `018cce3`。
-2. 若目标是完整 BEHAVIOR rollout，还需要 graphics-capable OmniGibson 节点，或让平台为仿真 Pod 提供 NVIDIA graphics/Vulkan 能力。该条件与 policy server 的 compute-only 验收相互独立。
+2. 本节点图形运行时已适配完成；完整 BEHAVIOR rollout 应通过 `scripts/with_node_graphics_runtime.sh` 启动 evaluator，并继续保留真实 observation、high `<HL_END>`、low chunk 和23D action的完整证据。
 
 ## 当前最短路径
 
