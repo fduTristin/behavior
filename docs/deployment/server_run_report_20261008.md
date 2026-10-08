@@ -3,17 +3,32 @@
 - 日期：2026-10-08（北京时间）
 - 节点：`/run/ti/BEHAVIOR2026`
 - 适配分支：`fix/node-stage1-e2e-20261008`
-- 代码提交：`78dcc6145b241d471cd87eb2c5a090ef506794fa`
+- 当前代码提交：`2eef10c`（已推送 `origin/fix/node-stage1-e2e-20261008`）
+
+## 15:14 最终更新：真实 evaluator 五实例结果
+
+本节点的仿真与协议环境现已跑通到真实 high planner 请求，不再受 graphics capability 阻塞。针对官方 evaluator 在 `num_envs=1` 时仍发送 `(1,H,W,4)` singleton-batched RGBA 的实际合同，commit `2eef10c` 增加了仅限 batch=1 的解包与 RGBA→RGB；batch>1 仍显式拒绝，20项相关CPU回归通过。
+
+随后在GPU1串行运行 `picking_up_trash` public_test索引0–4（实例301–305），五次都完成真实场景、R1Pro、RTX、WebSocket、reset和task_id=1识别，但结果一致阻塞在首个 high 请求：1024 token内重复任务memory和 `NAVIGATE→trash_can`，没有 `<HL_END>`。汇总为5个connection、5个episode start、5个generation-bound failure、0个planner event、0个low chunk、0个23D action、0个结果JSON、0个MP4。因此当前结论是 **server+client可以启动并把真实观测送到模型，但完整评测rollout仍不能开始**；不能按5个进程的exit code 0报告通过或0% SR，因为 evaluator 的异常路径仍返回0。
+
+当前 server 已用相同checkpoint和参数重启在 `behavior-server` / GPU0 / 10110，PID `3470746`，healthz `OK`。client评测已结束、GPU1释放。证据：
+
+- server：`/run/ti/BEHAVIOR2026/logs/serve_e2e_10110_20261008_batchedfix.log`
+- evaluator：`/run/ti/BEHAVIOR2026/logs/eval_picking_up_trash_5inst_20261008_bridgefix.log`
+- 空结果目录：`/run/ti/BEHAVIOR2026/BEHAVIOR-1K/OmniGibson/outputs/picking_up_trash_5inst_20261008_bridgefix`
+- Kit日志：`kit_20261008_150336.log`、`150550.log`、`150757.log`、`151003.log`、`151210.log`
+
+下一步应固定一个真实首帧，做同一样本 teacher-forced 与 free-generation/stop-token对照，定位 high checkpoint 为什么学到正确目标片段却不能闭合。不要通过增加生成预算或在server拼接伪 `<HL_END>` 绕过严格门。
 
 ## 当前结论
 
-完整 high+low server 已经从新分支在 `behavior-server` tmux session 启动，当前运行于 GPU 0 / 端口 `10110`，PID 为 `3445679`，`/healthz` 返回 `OK`。两个 checkpoint 均精确恢复，常驻显存约 18.9 GiB；官方 WebSocket 握手也已通过。
+完整 high+low server 已经从新分支在 `behavior-server` tmux session 启动，当前运行于 GPU 0 / 端口 `10110`，PID 为 `3470746`，`/healthz` 返回 `OK`。两个 checkpoint 均精确恢复，常驻显存约 18.9 GiB；官方 WebSocket 握手及真实 evaluator observation 转换均已通过。
 
-当前不能宣称“正向闭环已经跑通”：全零 synthetic observation 和 radio 纹理替代图两次请求都在 high planner 自由生成阶段达到 1024-token 上限，未生成 `<HL_END>`，严格服务按设计关闭连接，因而没有进入同一 WebSocket 请求的 low chunk。低层已另用同一 low checkpoint 在 GPU 1 直接实测通过：产生 32-step horizon，并成功映射为有限的 `(23,)` official action。剩余缺口已收敛为“用真实 BEHAVIOR evaluator 首帧复验 high AR；若仍不闭合，则处理 high checkpoint 的自由生成/闭合能力”，不再是环境、CUDA、checkpoint restore、tmux、协议或 low FM 问题。
+当前不能宣称“正向闭环已经跑通”：除两个 synthetic 输入外，`picking_up_trash` 五个真实 public_test 实例也都在 high planner 自由生成阶段达到 1024-token 上限，未生成 `<HL_END>`，严格服务按设计关闭连接，因而没有进入同一 WebSocket 请求的 low chunk。低层已另用同一 low checkpoint 在 GPU 1 直接实测通过：产生 32-step horizon，并成功映射为有限的 `(23,)` official action。剩余缺口已收敛为 high checkpoint 的自由生成/闭合能力，不再是环境、CUDA、checkpoint restore、tmux、bridge协议或 low FM 问题。
 
 Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU graphics。旧报告中的 graphics capability 问题只阻塞 OmniGibson 仿真，不阻塞 high planner、low FM 和 WebSocket server 的独立验证。
 
-2026-10-08 14:39 更新：OmniGibson 图形阻塞也已通过隔离用户态 NVIDIA 580.95.05 运行时解除。Vulkan 现可枚举8卡，GPU1 上 `launch -> play -> physics step -> RTX render -> shutdown` 实测通过；说明见 `docs/deployment/node_graphics_runtime_20261008.md`。当前仍未执行完整 evaluator rollout，剩余阻塞是使用真实 evaluator observation 验证 high `<HL_END>` 及同请求 low/action 闭环，而不是图形环境。
+2026-10-08 14:39 更新：OmniGibson 图形阻塞也已通过隔离用户态 NVIDIA 580.95.05 运行时解除。Vulkan 现可枚举8卡，GPU1 上 `launch -> play -> physics step -> RTX render -> shutdown` 实测通过；说明见 `docs/deployment/node_graphics_runtime_20261008.md`。15:14 已进一步完成五个真实实例到 high 请求的验证，结果见本报告顶部更新。
 
 ## 当前代码状态
 
@@ -35,7 +50,7 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 - planner token budget 默认继承 checkpoint recipe 的审核值，不再沿用旧的 160-token 默认值；当前 checkpoint 配置为 1024。
 - 新增 `scripts/smoke_official_client.py`，可在不启动 OmniGibson 的情况下验证握手、reset、planner AR、low FM 和 23 维动作响应。
 
-当前分支尚未 push。权限恢复后已于 2026-10-08 重新执行 `git fetch origin --prune` 并成功；`origin/deploy/memlite-stage1` 仍为 `018cce308b27`，与本分支基线一致，远端部署分支没有需要补迁的新提交。
+当前分支已推送到 `origin/fix/node-stage1-e2e-20261008`，最新提交为 `2eef10c`。权限恢复后已于 2026-10-08 重新执行 `git fetch origin --prune` 并成功；`origin/deploy/memlite-stage1` 仍为 `018cce308b27`，与本分支基线一致，远端部署分支没有需要补迁的新提交。
 
 ## 已完成验证
 
@@ -48,11 +63,11 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 | Target-free planner prefix | 通过 | 真实 processor 输出经转换后通过模型自身 `_validate_target_free_high_prefix` |
 | 完整 server、healthz、official handshake | 通过 | `behavior-server` / GPU 0 / 10110；握手为 G0.5、R1Pro、23D、16 steps |
 | 新分支 high 和 low checkpoint GPU restore | 通过 | high 950 tensors、low 1138 tensors 精确恢复 |
-| Planner AR 到 `<HL_END>` | 未通过 | 两个非真实 evaluator 输入均重复 active-skills/memory，1024 token 内不闭合 |
+| Planner AR 到 `<HL_END>` | 未通过 | 两个synthetic输入及五个真实实例均重复active-skills/memory，1024 token内不闭合 |
 | Low FM 和 23 维动作映射 | 独立通过 | GPU 1 直接测试：horizon 32、shape `(23,)`、全部有限、L2 `1.420634` |
 | 同一 official 请求的 planner→low→action | 未通过 | high 严格拒绝后连接关闭，未进入 low；不能用伪 planner 或伪动作冒充闭环 |
 | OmniGibson 图形启动与 step/render | 通过 | GPU1 空场景验证；不是完整任务 rollout |
-| OmniGibson evaluator rollout | 未执行 | 图形阻塞已解除；待真实场景和 policy 闭环验证 |
+| OmniGibson evaluator rollout | 未开始有效step | 五个真实实例均到达首个high请求，但0 action、0结果JSON/视频 |
 
 运行证据保存在：
 
@@ -60,6 +75,8 @@ Policy server 本身只需要 CUDA compute 能力，不需要 Vulkan 或 GPU gra
 - 全零 official client：`/run/ti/BEHAVIOR2026/logs/smoke_official_10110_20261008.log`
 - radio 资产 official client：`/run/ti/BEHAVIOR2026/logs/smoke_official_radio_asset_10110_20261008.log`
 - low FM 独立 GPU 测试：`/run/ti/BEHAVIOR2026/logs/low_fm_direct_gpu1_20261008.log`
+- 修复后真实 evaluator：`/run/ti/BEHAVIOR2026/logs/eval_picking_up_trash_5inst_20261008_bridgefix.log`
+- 修复后 server：`/run/ti/BEHAVIOR2026/logs/serve_e2e_10110_20261008_batchedfix.log`
 
 ## 2026-10-08 宿主操作记录
 
@@ -118,11 +135,11 @@ tmux capture-pane -p -t behavior-server -S -80
 
 完成正向闭环验收还需要以下三项：
 
-1. 一帧真实 BEHAVIOR evaluator 初始观测，或训练分布中的已审核/缓存 episode 观测。部署包当前只有权重、统计量和资产，没有训练 episode 视频；全零图和物体 diffuse texture 都不能作为正向生成验收输入。
-2. 用该真实观测通过 official wire 复验 high AR。若仍在 1024 token 内不到 `<HL_END>`，需要对同一样本做 teacher-forced prefix 与 free generation 对照，定位 high checkpoint 的生成闭合/缓存/解码问题；不能放宽严格 admission 或在 server 中拼接伪 `<HL_END>`。
-3. high 通过后，在同一请求中观察 `STAGE1_PLANNER_EVENT` → `STAGE1_LOW_CHUNK` → `(23,)` action，才可把 server 状态改为“跑通”。
+1. 在不改变内容的前提下固定保存一个真实 evaluator 首帧 wire observation及其SHA，形成可重复的同输入诊断样本；本次日志证明真实输入已送达，但没有把大体积payload落盘。
+2. 对该同一样本做 teacher-forced prefix 与 free generation/stop-token对照，定位 high checkpoint 的生成闭合、模板或停止符问题；不能放宽严格 admission、增加生成预算掩盖循环，或在 server 中拼接伪 `<HL_END>`。
+3. high 修复后先复验一个实例，在同一请求中观察 `STAGE1_PLANNER_EVENT` → `STAGE1_LOW_CHUNK` → `(23,)` action，再恢复五实例评测。
 
-当前不需要重新下载模型、修改 low checkpoint或增加 CUDA 依赖。若使用真实 official evaluator 直接产生观测，则仍需要可运行的 OmniGibson graphics 环境；若能提供缓存的真实 wire observation，则 policy server 验收本身不需要 Vulkan。
+当前不需要重新下载模型、修改 low checkpoint、增加 CUDA 依赖或继续处理图形运行时。
 
 ## 启动步骤
 
@@ -210,6 +227,6 @@ Server 单请求通过后还有三项工作：
 
 ## 当前最短路径
 
-当前最短路径是：保持现有 `behavior-server` / 10110 运行 → 提供一帧真实 evaluator 或缓存 episode observation → 复验 high 是否到 `<HL_END>` → 若通过则收集同一请求的 planner/low/23D action 证据；若仍失败，则对该真实样本做 high teacher-forced/free-generation 对照。
+当前最短路径是：保持现有 `behavior-server` / 10110 运行 → 固定保存一帧已证明可复现失败的真实 observation → 做 high teacher-forced/free-generation与stop-token对照 → 修复后先收集一个实例同一请求的 planner/low/23D action 证据 → 再恢复五实例评测。
 
-在真实输入复验前，不应凭 synthetic OOD 失败直接重训，也不应修改 strict admission 或伪造 planner 事件。
+五个真实实例已经排除“只因synthetic OOD才失败”的可能，但仍不应直接扩大生成预算、修改 strict admission 或伪造 planner 事件。

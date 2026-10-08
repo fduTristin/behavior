@@ -1,5 +1,7 @@
 # 三人协作计划：MEM-Lite + FM 方法验证
 
+2026-10-08 15:14（北京时间）NODE-STAGE1-E2E 更新：singleton RGBA适配已提交推送为 `2eef10c`；`picking_up_trash` public_test 301–305 五个真实实例已在GPU1串行完成初始化并到达GPU0/10110 high请求，环境/RTX/PhysX/协议/task映射均通过。五次均在high重复NAVIGATE/trash_can并于1024 token前未出`<HL_END>`，统计为5 connection/5 high严格失败/0 planner event/0 low chunk/0 action/0 JSON/0视频，即0个有效rollout而非0% SR。evaluator错误路径仍返回进程码0，禁止按exit code报通过；下一依赖为真实首帧上的teacher-forced/free-generation及stop-token闭合诊断，不扩token或伪造结束符。server PID3470746保持healthz OK，GPU1已释放；证据见plan和server运行报告。
+
 2026-10-08 14:54–15:01（北京时间）NODE-STAGE1-E2E 更新：Codex 用当前 GPU0/10110 policy server 和本机 GPU1 隔离图形运行时启动 `picking_up_trash` public_test 0–4 串行评测。index0 已成功加载真实场景/R1Pro/RTX并 reset，首帧发现官方 evaluator 在 `num_envs=1` 时仍发送 `(1,224,224,4)` singleton-batched RGBA，旧 bridge 误按 3D 输入拒绝；不是误开并行或图形失败。后续实例已停止，最小 bridge 适配只解包 batch=1/丢 alpha，batch>1 仍拒绝，20项 CPU 回归通过；提交并重启同配置 server 后从 index0 重跑，日志及预算见 `docs/plan.md`。
 
 2026-10-08 14:39（北京时间）NODE-STAGE1-E2E 更新：Codex 已按 `10.0.0.11` 的已验证方案在本节点建立隔离 NVIDIA 580.95.05 用户态图形运行时；Vulkan 8卡枚举及 GPU1 OmniGibson `launch/play/step/render/shutdown` 均通过，GPU0 现有 policy server 不受影响。此前“必须由平台开放 graphics capability”的依赖已解除并更正；剩余集成门收敛为真实 evaluator observation 下的 high `<HL_END>`、low FM、23D action 全链路 rollout及独立review，不以空场景图形通过记作任务SR。

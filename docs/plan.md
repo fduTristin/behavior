@@ -10,6 +10,13 @@
 
 ## 实时进度（最新记录在前）
 
+### 2026-10-08 15:03–15:14（北京时间）：`picking_up_trash` 五实例真实 evaluator 完成，阻塞定位为 high AR（Codex / NODE-STAGE1-E2E）
+
+- singleton-batched RGBA bridge 修复已提交并推送为 `2eef10c`，20项相关CPU回归通过（另1项异步socket测试因pytest插件未启用而skip）。GPU0/10110 server 用原 high/low checkpoint 和原启动参数重启为 PID `3470746`，日志 `/run/ti/BEHAVIOR2026/logs/serve_e2e_10110_20261008_batchedfix.log`，终态 healthz `OK`、显存约18.9GiB。
+- GPU1 串行完成 `picking_up_trash` public_test 索引0–4（实例301–305）真实初始化与首请求，五次均成功完成场景/R1Pro/RTX加载、WebSocket握手、episode reset、task_id=1识别以及真实 `(1,224,224,4)` observation 转换；无 Vulkan、PhysX CUDA、bridge shape 或任务映射错误。五个Kit日志为 `kit_20261008_150336/150550/150757/151003/151210.log`。
+- 最终统计：5 connections / 5 episode starts / 5 high generation-bound failures / 0 `STAGE1_PLANNER_EVENT` / 0 `STAGE1_LOW_CHUNK` / 0 `STAGE1_ACTION`。每次 high 都在1024 token内重复 task memory 与以 `trash_can` 为目标的 NAVIGATE（instance304曾带真实 `trash_can_116` / floor parent），没有 `<HL_END>`；strict server正确关闭连接。输出目录 `/run/ti/BEHAVIOR2026/BEHAVIOR-1K/OmniGibson/outputs/picking_up_trash_5inst_20261008_bridgefix` 的5个json/videos子目录均为空，因此是 **0个有效rollout**，不是可计分的0% SR。
+- evaluator 捕获 WebSocket 异常后仍以进程码0退出，故launcher显示的五个 `exit_code=0`/`overall_status=0`不能作为通过证据；真实判据以server事件和产物为准。总client日志 `/run/ti/BEHAVIOR2026/logs/eval_picking_up_trash_5inst_20261008_bridgefix.log`。评测结束后GPU1回落5MiB、tmux `behavior-eval-trash`自动退出，server继续运行。剩余唯一闭环阻塞为 high checkpoint 的自由生成闭合能力；下一步应固定一帧真实首观测做 teacher-forced 与 free-generation/stop-token对照，不增加token预算、不拼接伪 `<HL_END>`。
+
 ### 2026-10-08 14:54–15:01（北京时间）：`picking_up_trash` 五实例真实 evaluator 启动与 bridge 适配（Codex / NODE-STAGE1-E2E）
 
 - 主要假设：本节点已验证的隔离 NVIDIA 580.95.05 图形运行时可支撑真实 OmniGibson evaluator，真实相机观测可进一步验证 high `<HL_END>` → low FM → 23D action 闭环；唯一负责人为 Codex。固定 policy server 源码 `654f8bc`、BEHAVIOR-1K `bd049de31`，checkpoint 与运行中 GPU0/10110 server 保持不变。
