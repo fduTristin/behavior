@@ -18,6 +18,7 @@
 - 02:22–02:29 适配已实现：从本地 dangling commit/blob 精确恢复 `memlite_planner_format.py`（恢复后 blob 仍为 `9836921…7a62`），修复 recipe 标量 `raw_shape`、CHW 图像及只读数组、processor rendered-alias→target-free `<EOC>` prefix 转换、sm_120 跳过不兼容 FA4/FA2，并令 planner token budget 默认继承已审核模型配置而非旧 160。52 项 stage1/MEM-Lite 相关 CPU 回归全过，bridge 非 socket 回归 7 项全过（socket 项因沙箱不可监听而明确跳过）；真实 high recipe/processor 三相机输出均为 `[1,3,256,256]`，转换结果通过模型自身 `_validate_target_free_high_prefix`。新增 `scripts/smoke_official_client.py`，供正常 pod shell 以单帧验证握手→reset→planner AR→low FM→23D action，不把 synthetic smoke 当任务成功。
 - GPU/进程验收阻塞边界：本 Codex 执行沙箱当前没有 `/dev/nvidia*`，`torch.cuda.is_available()==False`、`cudaGetDeviceCount` error 304，且不能创建 bridge 监听 socket；CPU 强行构造模型也在 Triton/FLA 初始化处因 0 active CUDA driver 失败，尚未进行新分支双模型 GPU restore、AR 解码或 23 维动作闭环。该失败不是 checkpoint/适配断言失败；需在可见 CUDA 设备与 localhost socket 的正常 pod shell 中执行新分支冒烟后才能宣称 server 跑通。
 - 适配代码提交为 `78dcc6145b241d471cd87eb2c5a090ef506794fa`；当前未 push，原因是本执行环境 DNS 无法解析 `github.com`。另一成员独立 review 与正常 pod shell GPU smoke 仍是合入/宣称闭环成功前置。
+- 02:34 按用户要求新增 server 运行交接报告 `docs/deployment/server_run_report_20261008.md`，汇总当前证据、正常 Pod shell 所需条件、10110 启动与 synthetic official 单请求命令、五项跑通标准、失败分流以及 server 通过后仍需的远端同步/独审/graphics 仿真条件；明确 compute-only 足够验证 policy server，graphics 只阻塞 OmniGibson。
 
 ### 2026-10-07 16:40（北京时间）：stage1 官方评测闭环补齐并本机验证；映射怀疑证伪（部署线程 / fduTristin fork）
 
