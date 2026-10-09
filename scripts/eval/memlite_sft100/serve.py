@@ -24,6 +24,8 @@ async def main():
     p.add_argument('--inference-mode', choices=['serial','batch'], default='serial')
     p.add_argument('--capture-train-audit', action='store_true')
     p.add_argument('--capture-alignment-trace', action='store_true')
+    p.add_argument('--low-checkpoint', type=Path)
+    p.add_argument('--low-checkpoint-sha256')
     args = p.parse_args()
     run = args.run
     run.mkdir(parents=True, exist_ok=True)
@@ -31,9 +33,15 @@ async def main():
     atomic_json(run/'policy_status.json', state)
     if args.capture_alignment_trace and args.inference_mode != 'batch':
         raise ValueError('Alignment trace currently requires batch inference mode')
+    if bool(args.low_checkpoint) != bool(args.low_checkpoint_sha256):
+        raise ValueError('--low-checkpoint and --low-checkpoint-sha256 must be supplied together')
+    checkpoint_overrides = ({'low': {'path': args.low_checkpoint,
+                                     'sha256': args.low_checkpoint_sha256}}
+                            if args.low_checkpoint else None)
     engine = await asyncio.to_thread(BatchedSFT, run/'no_checkpoints',
                                    mode=args.inference_mode, capture=args.capture_train_audit,
-                                   trace_dir=run/'alignment_trace' if args.capture_alignment_trace else None)
+                                   trace_dir=run/'alignment_trace' if args.capture_alignment_trace else None,
+                                   checkpoint_overrides=checkpoint_overrides)
     tasks = load_official_task_names(DATA/'2026-challenge-task-instances/metadata/B100_task_misc.csv')
     gate = asyncio.Lock()
     stopped = asyncio.Event()

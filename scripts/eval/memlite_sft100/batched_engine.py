@@ -57,10 +57,11 @@ def row_noise(helper, fixed=None, capture=None):
 
 
 class BatchedSFT(NativeSFT):
-    def __init__(self, output, *, mode='batch', capture=False, trace_dir=None):
+    def __init__(self, output, *, mode='batch', capture=False, trace_dir=None,
+                 checkpoint_overrides=None):
         if mode not in ('batch', 'serial'):
             raise ValueError('Unknown inference mode')
-        super().__init__(output)
+        super().__init__(output, checkpoint_overrides=checkpoint_overrides)
         self.mode = mode
         self.capture = capture
         self.last_timing = {}

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import numpy as np
 import torch
-from common import bootstrap, atomic_json
+from common import ROOT, CHECKPOINTS, bootstrap, atomic_json, verify_checkpoint_override
 bootstrap()
 from stage1_engine import Stage1Engine
 from g05.models.g05.inferencer import PolicyInferencer
@@ -16,16 +16,35 @@ def forbidden(*args, **kwargs):
 
 
 class NativeSFT(Stage1Engine):
-    def __init__(self, output):
+    def __init__(self, output, checkpoint_overrides=None):
         if os.environ.get('RL_RESUME_CHECKPOINT'):
             raise ValueError('An RL checkpoint cannot enter this SFT evaluation')
         os.environ['RL_REWARD_PROTOCOL'] = 'native_sft_evaluation'
         torch.optim.Adam.step = forbidden
         torch.optim.AdamW.step = forbidden
-        super().__init__(output)
+        checkpoint_overrides = checkpoint_overrides or {}
+        if set(checkpoint_overrides) - {'high', 'low'}:
+            raise ValueError('Unknown SFT checkpoint override')
+        verified = {
+            side: verify_checkpoint_override(side, spec['path'], spec['sha256'])
+            for side, spec in checkpoint_overrides.items()
+        }
+        resolved = {side: receipt['path'] for side, receipt in verified.items()}
+        super().__init__(output, checkpoint_overrides=resolved)
+        self.checkpoint_sources = {}
+        for side, (name, expected) in CHECKPOINTS.items():
+            self.checkpoint_sources[side] = verified.get(side, {
+                'path': str((ROOT / 'models/stage1' / side / name).resolve()),
+                'sha256': expected,
+                'size_bytes': Path(self.checkpoint_paths[side]).stat().st_size,
+                'explicit_override': False,
+            })
+        if self.checkpoint_paths != {side: item['path'] for side, item in self.checkpoint_sources.items()}:
+            raise RuntimeError('Loaded checkpoint path differs from verified provenance')
         self.initial_hashes = self.hashes()
         self.requests = 0
         atomic_json(self.output.parent / 'weights_initial.json', self.initial_hashes)
+        atomic_json(self.output.parent / 'checkpoint_sources.json', self.checkpoint_sources)
 
     def hashes(self):
         result = {}
@@ -81,6 +100,7 @@ class NativeSFT(Stage1Engine):
         if current != self.initial_hashes or self.trainer is not None:
             raise RuntimeError('SFT evaluation modified weights or constructed a trainer')
         return dict(weights_unchanged=True, model_hashes=current, optimizer_steps=0,
+                    checkpoint_sources=self.checkpoint_sources,
                     inference_requests=self.requests, native_fm=True,
                     max_allocated_gib=torch.cuda.max_memory_allocated()/2**30,
                     max_reserved_gib=torch.cuda.max_memory_reserved()/2**30)

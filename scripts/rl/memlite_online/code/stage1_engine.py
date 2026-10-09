@@ -21,18 +21,26 @@ def move(value):
 
 
 class Stage1Engine:
-    def __init__(self, output):
+    def __init__(self, output, checkpoint_overrides=None):
         vision._flash_attn_varlen=None;vision._flash_attn_backend=None
         self.models={};self.processors={};self.trainer=None
         self.reward_protocol=os.environ.get('RL_REWARD_PROTOCOL','legacy_two_task_v1')
         self.output=Path(output);self.output.mkdir(parents=True,exist_ok=True)
+        checkpoint_overrides = checkpoint_overrides or {}
+        if set(checkpoint_overrides) - {'high', 'low'}:
+            raise ValueError('Unknown Stage1 checkpoint override')
+        self.checkpoint_paths = {}
         for side,name in [('high','step_00048045_save_0027.pt'),('low','step_00098414_save_0021.pt')]:
             config=json.loads((ROOT/'configs'/(side+'_model.local.json')).read_text())
             original=make_processor(config,False)
             config['processor']['samples_builder']['_target_']='saved_builders.'+('PlannerOutcomeBuilder' if side=='high' else 'SkillFMActionBuilder')
             processor=make_processor(config,False)
             assert processor.samples_builder.template==original.samples_builder.template
-            state=torch.load(ROOT/'models/stage1'/side/name,map_location='cpu',mmap=True,weights_only=False)
+            checkpoint = Path(checkpoint_overrides.get(side, ROOT/'models/stage1'/side/name))
+            if not checkpoint.is_absolute() or not checkpoint.is_file():
+                raise ValueError(f'Invalid {side} checkpoint path: {checkpoint}')
+            self.checkpoint_paths[side] = str(checkpoint.resolve())
+            state=torch.load(checkpoint,map_location='cpu',mmap=True,weights_only=False)
             policy,_=restore_model(config,side,state=state['model_state_dict'])
             policy.requires_grad_(False).eval().cuda()
             self.models[side]=policy;self.processors[side]=processor

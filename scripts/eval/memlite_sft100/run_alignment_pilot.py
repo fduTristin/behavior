@@ -46,7 +46,7 @@ def wait_for(path, process, timeout, label):
         time.sleep(2)
 
 
-def validate(job, task, worker):
+def validate(job, task, worker, expected_low=None):
     task_output = job / "tasks" / task
     status = json.loads((task_output / "status.json").read_text())
     attempt = json.loads((task_output / "attempts/batch_00.json").read_text())
@@ -55,6 +55,12 @@ def validate(job, task, worker):
         raise RuntimeError("Official evaluator did not complete")
     if ack.get("weights_unchanged") is not True or ack.get("optimizer_steps") != 0:
         raise RuntimeError("Model weights changed during trace pilot")
+    if expected_low is not None:
+        loaded = ack.get("checkpoint_sources", {}).get("low", {})
+        if (loaded.get("path") != str(expected_low[0].resolve()) or
+                loaded.get("sha256") != expected_low[1] or
+                loaded.get("explicit_override") is not True):
+            raise RuntimeError("Evaluation did not use the requested low checkpoint")
     metrics = sorted((task_output / "json").glob("*.json"))
     videos = sorted((task_output / "videos").glob("*.mp4"))
     trace_root = worker / "alignment_trace" / task
@@ -86,7 +92,13 @@ def main():
     parser.add_argument("--task", choices=["turning_on_radio", "picking_up_trash"], required=True)
     parser.add_argument("--gpu", type=int, required=True)
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--low-checkpoint", type=Path)
+    parser.add_argument("--low-checkpoint-sha256")
     args = parser.parse_args()
+    if bool(args.low_checkpoint) != bool(args.low_checkpoint_sha256):
+        parser.error("--low-checkpoint and --low-checkpoint-sha256 must be supplied together")
+    expected_low = ((args.low_checkpoint.resolve(), args.low_checkpoint_sha256.lower())
+                    if args.low_checkpoint else None)
     job = args.job.resolve()
     job.mkdir(parents=True, exist_ok=True)
     (job / "tasks").mkdir(exist_ok=True)
@@ -95,7 +107,9 @@ def main():
     worker = job / "workers" / args.task
     worker.mkdir(exist_ok=False)
     state = {"status": "starting", "task": args.task, "gpu": args.gpu,
-             "port": args.port, "pid": os.getpid(), "started": time.time()}
+             "port": args.port, "pid": os.getpid(), "started": time.time(),
+             "low_checkpoint": ({"path": str(expected_low[0]), "sha256": expected_low[1]}
+                                if expected_low else None)}
     atomic_json(worker / "pilot_status.json", state)
 
     env = os.environ.copy()
@@ -116,10 +130,14 @@ def main():
     policy_log = (job / "logs" / f"{args.task}.policy.log").open("x")
     simulator_log = (job / "logs" / f"{args.task}.sim.log").open("x")
     try:
-        policy = subprocess.Popen(
-            [str(MODEL_PYTHON), str(SOURCE / "serve.py"), "--run", str(worker),
+        policy_command = [str(MODEL_PYTHON), str(SOURCE / "serve.py"), "--run", str(worker),
              "--port", str(args.port), "--inference-mode", "batch",
-             "--capture-alignment-trace"],
+             "--capture-alignment-trace"]
+        if expected_low:
+            policy_command += ["--low-checkpoint", str(expected_low[0]),
+                               "--low-checkpoint-sha256", expected_low[1]]
+        policy = subprocess.Popen(
+            policy_command,
             env=env, stdin=subprocess.DEVNULL, stdout=policy_log, stderr=subprocess.STDOUT,
             start_new_session=True,
         )
@@ -146,7 +164,7 @@ def main():
         policy_code = policy.wait(timeout=900)
         if policy_code != 0:
             raise RuntimeError(f"Policy exited {policy_code}")
-        result = validate(job, args.task, worker)
+        result = validate(job, args.task, worker, expected_low)
         state.update(status="complete", finished=time.time(), result=result)
         atomic_json(worker / "pilot_status.json", state)
     except Exception as error:

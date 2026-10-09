@@ -40,6 +40,27 @@ def sha256(path):
     return h.hexdigest()
 
 
+def verify_checkpoint_override(side, path, expected_sha256):
+    """Resolve and hash an explicit evaluation checkpoint before model load."""
+    if side not in CHECKPOINTS:
+        raise ValueError('Unknown checkpoint side: ' + str(side))
+    path = Path(path)
+    if not path.is_absolute() or not path.is_file():
+        raise ValueError(f'Checkpoint override must be an existing absolute file: {path}')
+    expected = str(expected_sha256).lower()
+    if len(expected) != 64 or any(ch not in '0123456789abcdef' for ch in expected):
+        raise ValueError('Checkpoint override requires a full lowercase SHA256')
+    actual = sha256(path)
+    if actual != expected:
+        raise ValueError(f'{side} checkpoint SHA256 mismatch: expected {expected}, got {actual}')
+    return {
+        'path': str(path.resolve()),
+        'sha256': actual,
+        'size_bytes': path.stat().st_size,
+        'explicit_override': True,
+    }
+
+
 def atomic_json(path, value):
     path = Path(path)
     temp = path.with_suffix(path.suffix + '.tmp')

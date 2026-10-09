@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 import msgpack
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common import aggregate, expected_cases, load_official_task_names
+from common import aggregate, expected_cases, load_official_task_names, sha256, verify_checkpoint_override
 from wire import packb, unpackb
 from summarize import summarize
 
@@ -32,6 +32,20 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(load_official_task_names(p)[0],'task_0')
             p.write_text('Task ID,Task\n0,turning_on_radio\n')
             with self.assertRaises(ValueError):load_official_task_names(p)
+
+    def test_checkpoint_override_requires_absolute_path_and_exact_sha(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'low.pt'
+            path.write_bytes(b'checkpoint')
+            expected = sha256(path)
+            receipt = verify_checkpoint_override('low', path, expected)
+            self.assertEqual(receipt['path'], str(path.resolve()))
+            self.assertEqual(receipt['sha256'], expected)
+            self.assertTrue(receipt['explicit_override'])
+            with self.assertRaises(ValueError):
+                verify_checkpoint_override('low', Path('relative.pt'), expected)
+            with self.assertRaises(ValueError):
+                verify_checkpoint_override('low', path, '0' * 64)
 
     def test_partial_missing_zero_explicit(self):
         report = aggregate(self.tasks,[self.record()])

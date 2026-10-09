@@ -12,6 +12,13 @@
 
 ## 实时进度（最新记录在前）
 
+### 2026-10-10：50k low checkpoint 同口径两任务复测（Codex / EVAL-LOW50K-10383，准备中）
+
+- **用户授权与主要假设：** 监视 ModelScope `fduTristin/memlite-stage1` 的 low 50k 上传；上传完整后，只把上一轮低层 `step_00098414_save_0021.pt` 替换为 `low/checkpoints/step_00050000_save_0011.pt`，保持高层48045、官方 BEHAVIOR post2、任务、实例、seed、3-env batch、16-action chunk、high 每8 chunk规划、官方 horizon 和 trace/text-video 协议不变。复测 `turning_on_radio`、`picking_up_trash` 各 public_test 索引0/1/2（301/302/303），与98k基线作同口径比较；不训练、不扩实例。
+- **10月10日当前远端状态：** ModelScope API已认证读取到50k权重（16,581,377,974 bytes）及 checkpoint/eval JSON，仓库更新时间为2026-10-09 18:15:33 UTC；尚需稳定性复核、侧车身份检查、完整下载及SHA256固定，不能仅凭列表存在称下载或评测完成。权重将放独立路径，不覆盖98k基线；凭据不写入代码、计划或日志。
+- **远端稳定性与适配进展：** 间隔复查后远端更新时间、50k文件路径和大小均未变化；下载的侧车声明step=50000、权重SHA256=`a9cc006e3a9a2b796dc7cb0feebb02cd1b66c9878835945384084d59d31bbc56`，两份eval JSON逐字节一致且记录100-task/3,200-window weighted loss 0.104374。`latest.json`仍指向98,414步，故明确禁止跟随latest，改用精确路径+完整SHA。已增加只对本次SFT评测生效的显式low checkpoint参数、加载前SHA校验和完成回执，默认98k行为不变；31项CPU测试与compile通过。16.58GB权重正在独立目录以ModelScope官方SDK分段下载，下载端同时执行声明SHA校验。
+- **预算与停止条件：** 最多2 GPU并行跑两任务、各1 rollout/instance；负责人Codex，起始代码`feat/eval-chunk-text-overlay-20261009@bd298c4`。若远端大小/版本变化、侧车与权重step不符、SHA不稳定、模型加载失败、任一实例串扰、trace/frame映射错误、权重发生更新、OOM或仿真基础设施异常，立即停止对应作业并保留证据，不把partial结果记为成绩。目标产物位于 BEHAVIOR-1K 默认`outputs/`下，包含原始metrics/video、逐chunk trace、带高低层/memory/prompt文本的视频、完整解码校验和比较报告。
+
 ### 2026-10-09：两任务 observation／高低层文本逐 chunk 对齐验证（Codex / EVAL-TRACE-OVERLAY-10383，实施中）
 
 - **用户授权范围：** 使用 `turning_on_radio` 与 `picking_up_trash`，各运行 public_test 前3个 instance（索引0/1/2，对应301/302/303），验证 observation、high-level 原始文本、规划前后 memory 与实际 low-level prompt 的逐 chunk 对齐，并生成带文本的诊断视频；不扩大到更多任务或训练。
