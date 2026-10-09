@@ -10,6 +10,12 @@
 
 ## 实时进度（最新记录在前）
 
+### 2026-10-09 18:05（北京时间）：low step50k 中间 checkpoint 已补传 ModelScope（部署线程 / fduTristin）
+
+- 应用户要求，low 中间 checkpoint `step_00050000_save_0011.pt`（16,581,377,974 字节）+ sidecar `step_00050000_save_0011.json` + 对应 `eval_00050000.json` 已上传至 `fduTristin/memlite-stage1:low/checkpoints/`（tmux `ckpt` 会话，硬链接暂存入 staging，不占额外磁盘；上传约 31 分钟）。
+- 远端核验：Hub API 列到三文件且 pt 大小与本地完全一致；sidecar `.json` 经下载回比对逐字节一致。顶层 `high/`、`low/` 最终步 checkpoint 不变。
+- 如需挑选其他中点（如用各步 per-task open-loop loss 选"最优步"而非常停步），runs 里 low 每 5000、high 每 2000 均有完整存档可再传。
+
 ### 2026-10-07 16:40（北京时间）：stage1 官方评测闭环补齐并本机验证；映射怀疑证伪（部署线程 / fduTristin fork）
 
 - 背景：官方评测闭环需要 bridge（wire 协议）+ stage1 planner runtime（从未在任何分支发布）。本线程按用户指示排查上游 44 条远程分支，确认**无现成 runtime 可同步**（仅有 plan.md 提到的 b 候选 runtime glue，未入库）。
